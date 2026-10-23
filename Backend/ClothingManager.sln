@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.12.35527.113 d17.12
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClothingManager", "ClothingManager.csproj", "{7402DC43-799C-4C5A-99BA-364AD18862DA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7402DC43-799C-4C5A-99BA-364AD18862DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7402DC43-799C-4C5A-99BA-364AD18862DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7402DC43-799C-4C5A-99BA-364AD18862DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7402DC43-799C-4C5A-99BA-364AD18862DA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

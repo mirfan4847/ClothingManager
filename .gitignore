@@ -1,0 +1,33 @@
+# Visual Studio / .NET
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.DotSettings.user
+
+# Node / Frontend
+node_modules/
+**/node_modules/
+Frontend/node_modules/
+dist/
+dist-ssr/
+*.local
+.npm
+
+# Logs
+*.log
+backend_error.log
+backend_startup.log
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS generated files
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
