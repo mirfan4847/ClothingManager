@@ -1,38 +1,115 @@
 import axios from 'axios';
 
-// ✅ Relative URL - Vite proxy forwards /api/* to http://localhost:5000/api/*
-const api = axios.create({ baseURL: '/api' });
+// ✅ Support Production root (/api), Vite proxy (:5173 -> /api), standalone backend (:5001 -> /api), and local IIS (/front -> /back/api)
+const firstPathSeg = (window.location.pathname || '/').split('/').filter(Boolean)[0] || '';
+const isHostedUnderFront = firstPathSeg.toLowerCase() === 'front';
+const host = window.location.hostname || 'localhost';
+const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.');
+const iisBackUrl = `http://${host}/back/api`;
+const standaloneUrl = `http://${host}:5001/api`;
 
-// Attach JWT token
-api.interceptors.request.use(config => {
+const api = axios.create({
+  baseURL: isHostedUnderFront ? iisBackUrl : '/api'
+});
+
+const LOCAL_CRED_MAP = {
+  'local-admin-token':   { username: 'admin',   password: 'admin123' },
+  'local-manager-token': { username: 'manager', password: 'manager123' },
+  'local-viewer-token':  { username: 'viewer',  password: 'viewer123' },
+};
+let _upgradingTokenPromise = null;
+
+// Attach JWT token (and auto-upgrade legacy local-* tokens to real JWTs)
+api.interceptors.request.use(async config => {
   try {
     const saved = sessionStorage.getItem('cm_user');
     if (saved) {
-      const { token } = JSON.parse(saved);
-      if (token && !token.startsWith('local-'))
+      let parsed = JSON.parse(saved);
+      let token = parsed?.token;
+
+      if (token && token.startsWith('local-') && !config.url?.includes('/auth/login')) {
+        const creds = LOCAL_CRED_MAP[token] || { username: parsed.username || 'admin', password: `${parsed.username || 'admin'}123` };
+        if (!_upgradingTokenPromise) {
+          _upgradingTokenPromise = axios.post(`${api.defaults.baseURL}/auth/login`, creds)
+            .then(r => {
+              if (r.data?.token) {
+                const updatedUser = { ...parsed, ...r.data };
+                sessionStorage.setItem('cm_user', JSON.stringify(updatedUser));
+                return r.data.token;
+              }
+              return null;
+            })
+            .catch(() => null)
+            .finally(() => { _upgradingTokenPromise = null; });
+        }
+        const realToken = await _upgradingTokenPromise;
+        if (realToken) token = realToken;
+      }
+
+      if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+      }
     }
   } catch {}
   return config;
 });
 
-// Handle 401 — only force-logout if the user has a real (non-local) JWT token
+// Handle IIS <-> standalone fallback & 401
 api.interceptors.response.use(
-  res => res,
-  err => {
-    if (err.response?.status === 401) {
+  async res => {
+    // Guard against SPA fallback returning index.html for an API route
+    if (
+      typeof res.data === 'string' &&
+      res.data.trim().toLowerCase().startsWith('<!doctype html') &&
+      res.config &&
+      !res.config._retriedRootApi
+    ) {
+      res.config._retriedRootApi = true;
+      res.config.baseURL = '/api';
+      api.defaults.baseURL = '/api';
+      return api.request(res.config);
+    }
+    return res;
+  },
+  async err => {
+    const config = err.config;
+    const status = err.response?.status;
+    const isServerDownOrProxyErr = !err.response || status === 404 || status === 500 || status === 502 || status === 503 || status === 504;
+
+    if (config && isLocalHost && isServerDownOrProxyErr) {
+      // 1. If running on Vite (:5173) and :5001 is not running, try standaloneUrl directly or IIS /back/api
+      if (!config._retriedStandalone && api.defaults.baseURL !== standaloneUrl) {
+        config._retriedStandalone = true;
+        config.baseURL = standaloneUrl;
+        api.defaults.baseURL = standaloneUrl;
+        return api.request(config);
+      }
+      // 2. If standalone (:5001) is not running, fall back to IIS (/back/api) which runs as a Windows service
+      if (!config._retriedIisBack && api.defaults.baseURL !== iisBackUrl) {
+        config._retriedIisBack = true;
+        config.baseURL = iisBackUrl;
+        api.defaults.baseURL = iisBackUrl;
+        return api.request(config);
+      }
+    }
+
+    if (status === 401) {
       try {
+        const isLoginEndpoint = config?.url?.includes('/auth/login');
         const saved = sessionStorage.getItem('cm_user');
         const token = saved ? JSON.parse(saved)?.token : null;
         const isLocalToken = token?.startsWith('local-');
-        if (!isLocalToken) {
+
+        // Only redirect real (non-local) sessions on non-login endpoints when token expires
+        if (!isLoginEndpoint && !isLocalToken) {
           sessionStorage.removeItem('cm_user');
-          window.location.href = '/login';
+          const seg = (window.location.pathname || '/').split('/').filter(Boolean)[0];
+          const loginPath = seg && seg.toLowerCase() === 'front' ? `/${seg}/login` : '/login';
+          if (!window.location.pathname.toLowerCase().endsWith('/login')) {
+            window.location.href = loginPath;
+          }
         }
-      } catch {
-        sessionStorage.removeItem('cm_user');
-        window.location.href = '/login';
-      }
+      } catch {}
     }
     return Promise.reject(err);
   }
@@ -41,6 +118,7 @@ api.interceptors.response.use(
 // Auth
 export const login = (data) => api.post('/auth/login', data).then(r => r.data);
 export const getMe = ()     => api.get('/auth/me').then(r => r.data);
+export const seedAuthUsers = () => api.post('/auth/seed-users').then(r => r.data);
 
 // Users
 export const getUsers         = ()         => api.get('/users').then(r => r.data);
@@ -53,12 +131,15 @@ export const changePassword   = (id, data) => api.patch(`/users/${id}/change-pas
 export const getRoles        = ()            => api.get('/roles').then(r => r.data);
 export const updateRolePerms = (role, perms) => api.put(`/roles/${role}`, perms).then(r => r.data);
 
-// Dropdowns
-export const getSizes    = () => api.get('/dropdowns/sizes').then(r => r.data);
-export const getColors   = () => api.get('/dropdowns/colors').then(r => r.data);
-export const getMachines = () => api.get('/dropdowns/machines').then(r => r.data);
-export const getWorkers  = () => api.get('/dropdowns/workers').then(r => r.data);
-export const getAllStaff = () => api.get('/dropdowns/all-staff').then(r => r.data);
+// Dropdowns & Workers
+export const getSizes     = () => api.get('/dropdowns/sizes').then(r => r.data);
+export const getColors    = () => api.get('/dropdowns/colors').then(r => r.data);
+export const getMachines  = () => api.get('/dropdowns/machines').then(r => r.data);
+export const getMaterials = () => api.get('/masters/materials').then(r => r.data).catch(() => api.get('/dropdowns/materials').then(r => r.data));
+export const getBagTypes  = () => api.get('/masters/bag-types').then(r => r.data).catch(() => api.get('/dropdowns/bag-types').then(r => r.data));
+export const getWorkers   = () => api.get('/dropdowns/workers').then(r => r.data);
+export const getAllStaff  = () => api.get('/dropdowns/all-staff').then(r => r.data);
+export const getAllWorkers = () => api.get('/workers').then(r => r.data);
 
 // Lots
 export const getLots          = (params)   => api.get('/lots', { params }).then(r => r.data);
@@ -72,8 +153,9 @@ export const uploadLotPicture = (id, file)   => {
 };
 
 // Worker Entries
-export const getEntries    = (workerId) => api.get('/workerentries', { params: { workerId } }).then(r => r.data);
-export const getEntry      = (id)       => api.get(`/workerentries/${id}`).then(r => r.data);
+export const getEntries      = (workerId) => api.get('/workerentries', { params: { workerId } }).then(r => r.data);
+export const getEntriesByLot = (params)   => api.get('/workerentries/by-lot', { params }).then(r => r.data);
+export const getEntry        = (id)       => api.get(`/workerentries/${id}`).then(r => r.data);
 export const createEntry   = (data)     => api.post('/workerentries', data).then(r => r.data);
 export const updateEntry   = (id, data) => api.put(`/workerentries/${id}`, data).then(r => r.data);
 export const deleteEntry   = (id)       => api.delete(`/workerentries/${id}`);
@@ -84,6 +166,25 @@ export const uploadPicture = (id, file) => {
     headers: { 'Content-Type': 'multipart/form-data' }
   }).then(r => r.data);
 };
+
+// AI Slip Scanner & Bulk Import
+export const scanProductionSlip = (file, workerId, apiKey) => {
+  const form = new FormData();
+  form.append('file', file);
+  const headers = { 'Content-Type': 'multipart/form-data' };
+  if (apiKey) headers['X-Gemini-Key'] = apiKey;
+  return api.post('/workerentries/scan-slip', form, {
+    params: workerId ? { workerId } : undefined,
+    headers,
+  }).then(r => r.data);
+};
+
+export const bulkCreateEntries = (workerId, entries) =>
+  api.post('/workerentries/bulk-create', { workerId, entries }).then(r => r.data);
+
+export const getAiConfig = () => api.get('/ai/config').then(r => r.data);
+export const testAiKey   = (apiKey) => api.post('/ai/test-key', { apiKey }).then(r => r.data);
+export const saveAiKey   = (apiKey) => api.post('/ai/save-key', { apiKey }).then(r => r.data);
 
 // Accounts
 export const getAccountSummary    = ()      => api.get('/accounts/summary').then(r => r.data);

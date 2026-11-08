@@ -14,6 +14,11 @@ public class AppDbContext : DbContext
     public DbSet<Size> Sizes => Set<Size>();
     public DbSet<Color> Colors => Set<Color>();
     public DbSet<Machine> Machines => Set<Machine>();
+    public DbSet<TaskTypeItem> TaskTypes => Set<TaskTypeItem>();
+    public DbSet<MaterialItem> Materials => Set<MaterialItem>();
+    public DbSet<BagTypeItem> BagTypes => Set<BagTypeItem>();
+    public DbSet<WorkerRoleItem> WorkerRoles => Set<WorkerRoleItem>();
+    public DbSet<LotStageItem> LotStages => Set<LotStageItem>();
     public DbSet<WorkerEntry> WorkerEntries => Set<WorkerEntry>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Role> Roles => Set<Role>();

@@ -5,6 +5,8 @@ public class Worker
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string SheetType { get; set; } = string.Empty;
+    public string? Phone { get; set; }
+    public string? JoinDate { get; set; }
     public bool IsActive { get; set; } = true;
     public string PersonType { get; set; } = "Worker"; // "Worker" | "Management"
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -20,6 +22,7 @@ public class Lot
     public string? Material { get; set; }
     public string Status { get; set; } = "Stitching";
     public string? PicturePath { get; set; }
+    public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<WorkerEntry> Entries { get; set; } = new List<WorkerEntry>();
 }
@@ -28,18 +31,56 @@ public class Size
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
 }
 
 public class Color
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
 }
 
 public class Machine
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class TaskTypeItem
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class MaterialItem
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class BagTypeItem
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class WorkerRoleItem
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class LotStageItem
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
 }
 
 public class WorkerEntry

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  ResponsiveContainer, BarChart, Bar, LineChart, Line,
+  ResponsiveContainer, BarChart, Bar,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, AreaChart, Area,
 } from 'recharts';
@@ -9,21 +9,33 @@ import {
   getReportPaymentMethods, getReportAccountStatement, getReportExpenses,
   getReportPayroll, getAccounts,
 } from '../services/api';
+import { useTheme } from '../context/ThemeContext';
+
+// ─── Bootstrap 5 Palette & Colors ─────────────────────────────────────────────
+const BT = {
+  primary:   '#0d6efd',
+  secondary: '#6c757d',
+  success:   '#198754',
+  danger:    '#dc3545',
+  warning:   '#ffc107',
+  info:      '#0dcaf0',
+  dark:      '#212529',
+  purple:    '#6f42c1',
+  orange:    '#fd7e14',
+  teal:      '#20c997',
+};
+
+const PIE_COLORS = [BT.success, BT.warning, BT.purple, BT.info, BT.danger, BT.primary, BT.teal, BT.orange];
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const fmt     = n => `Rs ${Number(n ?? 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-const fmtK    = n => { const v = Number(n ?? 0); return v >= 1000000 ? `Rs ${(v/1000000).toFixed(1)}M` : v >= 1000 ? `Rs ${(v/1000).toFixed(0)}K` : `Rs ${v}`; };
+const fmtK    = n => {
+  const v = Number(n ?? 0);
+  return v >= 1000000 ? `Rs ${(v/1000000).toFixed(1)}M` : v >= 1000 ? `Rs ${(v/1000).toFixed(0)}K` : `Rs ${v}`;
+};
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const fmtShort= d => d ? new Date(d).toLocaleDateString('en-PK', { day: '2-digit', month: 'short' }) : '—';
-const toISO   = d => d instanceof Date ? d.toISOString().split('T')[0] : d;
 const pct     = (v, max) => max > 0 ? Math.min(100, Math.round((v / max) * 100)) : 0;
-
-const C = {
-  green: '#059669', purple: '#7c3aed', red: '#dc2626', amber: '#f59e0b',
-  cyan: '#0891b2', blue: '#2E75B6', rose: '#e11d48', indigo: '#4f46e5',
-  teal: '#0d9488', orange: '#ea580c',
-};
-const PIE_COLORS = [C.green, C.amber, C.purple, C.cyan, C.rose, C.indigo, C.teal, C.orange];
 
 // ─── Period Presets ───────────────────────────────────────────────────────────
 function getToday() { return new Date().toISOString().split('T')[0]; }
@@ -32,7 +44,7 @@ function presetDates(id) {
   const now = new Date();
   const y = now.getFullYear(), mo = now.getMonth(), d = now.getDate();
   const pad = n => String(n).padStart(2, '0');
-  const iso  = dt => dt.toISOString().split('T')[0];
+  const iso = dt => dt.toISOString().split('T')[0];
 
   switch (id) {
     case 'today': { const t = getToday(); return [t, t]; }
@@ -68,46 +80,48 @@ function presetDates(id) {
 }
 
 const PRESETS = [
-  { id: 'today',     label: 'Today'      },
-  { id: 'yesterday', label: 'Yesterday'  },
-  { id: 'week',      label: 'This Week'  },
-  { id: 'last7',     label: 'Last 7 Days'},
-  { id: 'month',     label: 'This Month' },
-  { id: 'lastmonth', label: 'Last Month' },
-  { id: 'quarter',   label: 'Quarter'    },
-  { id: 'year',      label: 'This Year'  },
-  { id: 'custom',    label: '✎ Custom'   },
+  { id: 'today',     label: 'Today'       },
+  { id: 'yesterday', label: 'Yesterday'   },
+  { id: 'week',      label: 'This Week'   },
+  { id: 'last7',     label: 'Last 7 Days' },
+  { id: 'month',     label: 'This Month'  },
+  { id: 'lastmonth', label: 'Last Month'  },
+  { id: 'quarter',   label: 'Quarter'     },
+  { id: 'year',      label: 'This Year'   },
+  { id: 'custom',    label: '✎ Custom'    },
 ];
 
 // ─── Shared Chart Tooltip ─────────────────────────────────────────────────────
 const ChartTip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: '#1e2a3b', borderRadius: 10, padding: '10px 14px', boxShadow: '0 4px 20px rgba(0,0,0,.35)', fontSize: 12 }}>
-      {label && <div style={{ color: '#7a9cc0', marginBottom: 6, fontWeight: 600 }}>{label}</div>}
+    <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)', fontSize: 12 }}>
+      {label && <div style={{ color: '#94a3b8', marginBottom: 6, fontWeight: 700, textTransform: 'uppercase', fontSize: 11 }}>{label}</div>}
       {payload.map((p, i) => (
-        <div key={i} style={{ color: '#fff', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div key={i} style={{ color: '#fff', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 10, height: 10, borderRadius: 3, background: p.color, display: 'inline-block', flexShrink: 0 }} />
-          <span style={{ color: '#94a3b8' }}>{p.name}:</span>
-          <span style={{ fontWeight: 700 }}>{fmt(p.value)}</span>
+          <span style={{ color: '#cbd5e1' }}>{p.name}:</span>
+          <span style={{ fontWeight: 800 }}>{fmt(p.value)}</span>
         </div>
       ))}
     </div>
   );
 };
+
 const PieTip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   const p = payload[0];
   return (
-    <div style={{ background: '#1e2a3b', borderRadius: 10, padding: '10px 14px', fontSize: 12 }}>
-      <div style={{ color: '#fff', fontWeight: 700 }}>{p.name}</div>
-      <div style={{ color: '#94a3b8', marginTop: 2 }}>{fmt(p.value)}</div>
+    <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: '10px 14px', fontSize: 12, boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+      <div style={{ color: '#fff', fontWeight: 800 }}>{p.name}</div>
+      <div style={{ color: '#94a3b8', marginTop: 3 }}>{fmt(p.value)}</div>
     </div>
   );
 };
 
-// ─── Root ─────────────────────────────────────────────────────────────────────
+// ─── Main Reports Component ───────────────────────────────────────────────────
 export default function ReportsModule() {
+  const { isDark } = useTheme();
   const [tab,     setTab]     = useState('overview');
   const [preset,  setPreset]  = useState('year');
   const [from,    setFrom]    = useState(() => presetDates('year')[0]);
@@ -126,74 +140,119 @@ export default function ReportsModule() {
   const applyCustom = () => setApplied({ from, to });
 
   const TABS = [
-    { id: 'overview', label: '📊 Overview'      },
-    { id: 'sales',    label: '🧾 Sales'          },
-    { id: 'cashflow', label: '📈 Cash Flow'      },
-    { id: 'payroll',  label: '👷 Payroll'        },
-    { id: 'ledger',   label: '🏦 Ledger'         },
-    { id: 'expenses', label: '💸 Expenses'       },
+    { id: 'overview', label: 'Overview',   icon: '📊' },
+    { id: 'sales',    label: 'Sales',      icon: '🧾' },
+    { id: 'cashflow', label: 'Cash Flow',  icon: '📈' },
+    { id: 'payroll',  label: 'Payroll',    icon: '👷' },
+    { id: 'ledger',   label: 'Ledger',     icon: '🏦' },
+    { id: 'expenses', label: 'Expenses',   icon: '💸' },
   ];
 
   return (
-    <div style={s.page}>
-      {/* Header */}
-      <div style={s.header}>
-        <div style={s.headerLeft}>
-          <div style={s.headerIcon}>📊</div>
+    <div style={styles.page(isDark)} className="hide-scrollbar">
+
+      {/* ── Executive Header Banner (Bootstrap 5 Style) ── */}
+      <div style={styles.header(isDark)}>
+        <div style={styles.headerLeft}>
+          <div style={styles.headerIconWrap}>
+            <span>📊</span>
+          </div>
           <div>
-            <div style={s.headerSub}>Analytics</div>
-            <div style={s.headerTitle}>Finance Reports</div>
+            <div style={styles.headerBreadcrumb}>FINANCIAL ANALYTICS &amp; INTELLIGENCE</div>
+            <h1 style={styles.headerTitle(isDark)}>Reports &amp; Business Insights</h1>
           </div>
         </div>
-        <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>
-          {applied.from} → {applied.to}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={styles.headerBadge}>
+            Live Financial Engine
+          </span>
+          <span style={styles.headerSubBadge(isDark)}>
+            {applied.from} → {applied.to}
+          </span>
         </div>
       </div>
 
-      {/* Period Selector */}
-      <div style={s.periodBar}>
-        <div style={s.presetGroup}>
-          {PRESETS.map(p => (
-            <button key={p.id} onClick={() => selectPreset(p.id)}
-              style={{ ...s.presetBtn, ...(preset === p.id ? s.presetActive : {}) }}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {preset === 'custom' && (
-          <div style={s.customRange}>
-            <input type="date" style={s.dateInput} value={from} onChange={e => setFrom(e.target.value)} />
-            <span style={{ color: '#6b7280', fontSize: 13 }}>–</span>
-            <input type="date" style={s.dateInput} value={to}   onChange={e => setTo(e.target.value)} />
-            <button style={s.applyBtn} onClick={applyCustom}>Apply</button>
+      <div style={styles.content}>
+
+        {/* ── Filter / Period Selector Bar (Bootstrap Pill Style) ── */}
+        <div style={styles.periodBar(isDark)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: isDark ? '#94a3b8' : '#6c757d', letterSpacing: 0.8 }}>
+              PERIOD:
+            </span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {PRESETS.map(p => {
+                const active = preset === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => selectPreset(p.id)}
+                    style={styles.presetBtn(active, isDark)}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Tabs */}
-      <div style={s.tabBar}>
-        {TABS.map(({ id, label }) => (
-          <button key={id} onClick={() => setTab(id)}
-            style={{ ...s.tabBtn, ...(tab === id ? s.tabActive : {}) }}>
-            {label}
-          </button>
-        ))}
-      </div>
+          {preset === 'custom' && (
+            <div style={styles.customRange(isDark)}>
+              <input
+                type="date"
+                style={styles.dateInput(isDark)}
+                value={from}
+                onChange={e => setFrom(e.target.value)}
+              />
+              <span style={{ color: isDark ? '#94a3b8' : '#6c757d', fontSize: 13 }}>–</span>
+              <input
+                type="date"
+                style={styles.dateInput(isDark)}
+                value={to}
+                onChange={e => setTo(e.target.value)}
+              />
+              <button style={styles.applyBtn} onClick={applyCustom}>
+                Apply Range
+              </button>
+            </div>
+          )}
+        </div>
 
-      <div style={s.body}>
-        {tab === 'overview' && <OverviewTab  from={applied.from} to={applied.to} />}
-        {tab === 'sales'    && <SalesTab     from={applied.from} to={applied.to} />}
-        {tab === 'cashflow' && <CashFlowTab  from={applied.from} to={applied.to} />}
-        {tab === 'payroll'  && <PayrollTab   from={applied.from} to={applied.to} />}
-        {tab === 'ledger'   && <LedgerTab    from={applied.from} to={applied.to} />}
-        {tab === 'expenses' && <ExpensesTab  from={applied.from} to={applied.to} />}
+        {/* ── Navigation Tab Pills ── */}
+        <div style={styles.tabNav(isDark)}>
+          {TABS.map(({ id, label, icon }) => {
+            const isActive = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                style={styles.navBtn(isActive, isDark)}
+              >
+                <span style={{ fontSize: 15 }}>{icon}</span>
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── Active Tab View ── */}
+        <div style={{ marginTop: 22 }}>
+          {tab === 'overview' && <OverviewTab  from={applied.from} to={applied.to} isDark={isDark} />}
+          {tab === 'sales'    && <SalesTab     from={applied.from} to={applied.to} isDark={isDark} />}
+          {tab === 'cashflow' && <CashFlowTab  from={applied.from} to={applied.to} isDark={isDark} />}
+          {tab === 'payroll'  && <PayrollTab   from={applied.from} to={applied.to} isDark={isDark} />}
+          {tab === 'ledger'   && <LedgerTab    from={applied.from} to={applied.to} isDark={isDark} />}
+          {tab === 'expenses' && <ExpensesTab  from={applied.from} to={applied.to} isDark={isDark} />}
+        </div>
+
       </div>
     </div>
   );
 }
 
-// ─── Overview ─────────────────────────────────────────────────────────────────
-function OverviewTab({ from, to }) {
+// ─── Overview Tab ─────────────────────────────────────────────────────────────
+function OverviewTab({ from, to, isDark }) {
   const [data, setData] = useState(null);
   const [methods, setMethods] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -205,64 +264,111 @@ function OverviewTab({ from, to }) {
         getReportFinanceSummary({ from, to }),
         getReportPaymentMethods({ from, to }),
       ]);
-      setData(d); setMethods(m);
-    } catch { setData(null); }
+      setData(d);
+      setMethods(m);
+    } catch {
+      setData(null);
+    }
     setLoading(false);
   }, [from, to]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <Loader />;
-  if (!data)   return <Empty msg="Could not load summary." />;
+  if (loading) return <Loader isDark={isDark} />;
+  if (!data)   return <Empty msg="Could not load financial summary." isDark={isDark} />;
 
   const kpis = [
-    { label: 'Revenue',       value: fmt(data.totalRevenue),          color: C.green,  bg: '#ecfdf5', icon: '💰' },
-    { label: 'Collected',     value: fmt(data.totalCollected),        color: C.purple, bg: '#f5f3ff', icon: '✅' },
-    { label: 'Outstanding',   value: fmt(data.totalOutstanding),      color: C.red,    bg: '#fef2f2', icon: '⏳' },
-    { label: 'Purchases',     value: fmt(data.totalPurchaseExpenses), color: C.amber,  bg: '#fffbeb', icon: '📦' },
-    { label: 'Wages',         value: fmt(data.totalWagesExpenses),    color: C.cyan,   bg: '#ecfeff', icon: '👷' },
-    { label: 'Net Cash Flow', value: fmt(data.netCashFlow),           color: data.netCashFlow >= 0 ? C.green : C.red, bg: data.netCashFlow >= 0 ? '#ecfdf5' : '#fef2f2', icon: data.netCashFlow >= 0 ? '📈' : '📉' },
+    { label: 'Total Revenue', value: fmt(data.totalRevenue), tag: 'INVOICED', icon: '💰', gradient: 'linear-gradient(135deg, #198754 0%, #157347 100%)' },
+    { label: 'Cash Collected', value: fmt(data.totalCollected), tag: 'RECEIVED', icon: '✅', gradient: 'linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%)' },
+    { label: 'Outstanding Balance', value: fmt(data.totalOutstanding), tag: 'RECEIVABLE', icon: '⏳', gradient: 'linear-gradient(135deg, #dc3545 0%, #b02a37 100%)' },
+    { label: 'Purchases Total', value: fmt(data.totalPurchaseExpenses), tag: 'MATERIAL', icon: '📦', gradient: 'linear-gradient(135deg, #fd7e14 0%, #d96309 100%)' },
+    { label: 'Wages Paid', value: fmt(data.totalWagesExpenses), tag: 'LABOUR', icon: '👷', gradient: 'linear-gradient(135deg, #6f42c1 0%, #59359a 100%)' },
+    {
+      label: 'Net Cash Flow',
+      value: fmt(data.netCashFlow),
+      tag: 'NET FLOW',
+      icon: data.netCashFlow >= 0 ? '📈' : '📉',
+      gradient: data.netCashFlow >= 0
+        ? 'linear-gradient(135deg, #20c997 0%, #0f5132 100%)'
+        : 'linear-gradient(135deg, #dc3545 0%, #842029 100%)',
+    },
   ];
 
   const barData = [
-    { name: 'Revenue',    value: data.totalRevenue,          fill: C.green  },
-    { name: 'Collected',  value: data.totalCollected,        fill: C.purple },
-    { name: 'Purchases',  value: data.totalPurchaseExpenses, fill: C.amber  },
-    { name: 'Wages',      value: data.totalWagesExpenses,    fill: C.cyan   },
-    { name: 'Outstanding',value: data.totalOutstanding,      fill: C.red    },
+    { name: 'Revenue',     value: data.totalRevenue,          fill: BT.success },
+    { name: 'Collected',   value: data.totalCollected,        fill: BT.primary },
+    { name: 'Purchases',   value: data.totalPurchaseExpenses, fill: BT.orange  },
+    { name: 'Wages',       value: data.totalWagesExpenses,    fill: BT.purple  },
+    { name: 'Outstanding', value: data.totalOutstanding,      fill: BT.danger  },
   ];
+
   const statusPie = [
     { name: 'Paid',    value: data.paidCount    },
     { name: 'Partial', value: data.partialCount },
     { name: 'Pending', value: data.pendingCount },
   ].filter(d => d.value > 0);
-  const statusColors = [C.green, C.amber, C.red];
+  const statusColors = [BT.success, BT.warning, BT.danger];
 
   const methodTotal = methods.reduce((a, m) => a + m.amount, 0);
   const methodPie   = methods.map((m, i) => ({ name: m.method, value: m.amount, color: PIE_COLORS[i % PIE_COLORS.length] }));
 
+  const gridColor = isDark ? '#334155' : '#e9ecef';
+  const textColor = isDark ? '#94a3b8' : '#6c757d';
+
   return (
     <div>
-      <div style={s.kpiGrid}>
+      {/* ── KPI Gradient Summary ── */}
+      <div style={styles.kpiGrid}>
         {kpis.map(k => (
-          <div key={k.label} style={{ ...s.kpiCard, background: k.bg, borderLeft: `4px solid ${k.color}` }}>
-            <div style={s.kpiIcon}>{k.icon}</div>
+          <div
+            key={k.label}
+            style={{
+              background: k.gradient,
+              borderRadius: 12,
+              padding: '16px 20px',
+              color: '#fff',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
             <div>
-              <div style={{ ...s.kpiVal, color: k.color }}>{k.value}</div>
-              <div style={s.kpiLabel}>{k.label}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', opacity: 0.85, marginBottom: 4 }}>
+                {k.tag}
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1 }}>
+                {k.value}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 500, opacity: 0.9, marginTop: 4 }}>
+                {k.label}
+              </div>
+            </div>
+            <div style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 22,
+            }}>
+              {k.icon}
             </div>
           </div>
         ))}
       </div>
 
-      <div style={s.twoCol}>
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Financial Snapshot</div>
+      {/* ── Two Column Charts Row ── */}
+      <div style={styles.twoCol}>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Financial Snapshot Overview</div>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={barData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+            <BarChart data={barData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
               <Tooltip content={<ChartTip />} />
               <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                 {barData.map((e, i) => <Cell key={i} fill={e.fill} />)}
@@ -271,35 +377,43 @@ function OverviewTab({ from, to }) {
           </ResponsiveContainer>
         </div>
 
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Sales by Status</div>
-          {statusPie.length === 0 ? <Empty msg="No sales in this period." /> : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-              <ResponsiveContainer width={200} height={200}>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Sales Fulfillment by Status</div>
+          {statusPie.length === 0 ? <Empty msg="No sales in this period." isDark={isDark} /> : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+              <ResponsiveContainer width={190} height={190}>
                 <PieChart>
-                  <Pie data={statusPie} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value">
+                  <Pie data={statusPie} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={4} dataKey="value">
                     {statusPie.map((_, i) => <Cell key={i} fill={statusColors[i]} />)}
                   </Pie>
                   <Tooltip content={<PieTip />} />
                 </PieChart>
               </ResponsiveContainer>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 160 }}>
                 {statusPie.map((d, i) => (
                   <div key={d.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, color: '#374151' }}>
-                      <span style={{ width: 11, height: 11, borderRadius: 3, background: statusColors[i], display: 'inline-block' }} />
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: isDark ? '#cbd5e1' : '#374151' }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: statusColors[i], display: 'inline-block' }} />
                       {d.name}
                     </span>
-                    <span style={{ fontWeight: 700, fontSize: 16, color: statusColors[i] }}>{d.value}</span>
+                    <span style={{ fontWeight: 800, fontSize: 15, color: statusColors[i] }}>{d.value}</span>
                   </div>
                 ))}
-                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 10, marginTop: 4 }}>
-                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 6 }}>Collection Rate</div>
+                <div style={{ borderTop: `1px solid ${isDark ? '#334155' : '#e9ecef'}`, paddingTop: 10, marginTop: 6 }}>
+                  <div style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#6c757d', marginBottom: 6, fontWeight: 600 }}>Collection Efficiency</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, background: '#e5e7eb', borderRadius: 99, height: 8 }}>
-                      <div style={{ width: `${pct(data.totalCollected, data.totalRevenue)}%`, background: `linear-gradient(90deg,${C.purple},${C.green})`, height: '100%', borderRadius: 99, transition: 'width .5s' }} />
+                    <div style={{ flex: 1, background: isDark ? '#334155' : '#e9ecef', borderRadius: 99, height: 8 }}>
+                      <div style={{
+                        width: `${pct(data.totalCollected, data.totalRevenue)}%`,
+                        background: `linear-gradient(90deg, ${BT.primary}, ${BT.success})`,
+                        height: '100%',
+                        borderRadius: 99,
+                        transition: 'width .5s ease'
+                      }} />
                     </div>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>{pct(data.totalCollected, data.totalRevenue)}%</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: BT.success }}>
+                      {pct(data.totalCollected, data.totalRevenue)}%
+                    </span>
                   </div>
                 </div>
               </div>
@@ -308,10 +422,11 @@ function OverviewTab({ from, to }) {
         </div>
       </div>
 
-      <div style={s.twoCol}>
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Payment Methods — Amount Collected</div>
-          {methodPie.length === 0 ? <Empty msg="No payments in this period." /> : (
+      {/* ── Methods & Positions Row ── */}
+      <div style={styles.twoCol}>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Payment Channels — Collections</div>
+          {methodPie.length === 0 ? <Empty msg="No payments recorded in this period." isDark={isDark} /> : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
               <ResponsiveContainer width={180} height={180}>
                 <PieChart>
@@ -321,17 +436,17 @@ function OverviewTab({ from, to }) {
                   <Tooltip content={<PieTip />} />
                 </PieChart>
               </ResponsiveContainer>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 160 }}>
                 {methodPie.map(m => (
                   <div key={m.name} style={{ marginBottom: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 13 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600, color: '#374151' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, fontSize: 12 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600, color: isDark ? '#cbd5e1' : '#374151' }}>
                         <span style={{ width: 10, height: 10, borderRadius: 3, background: m.color, display: 'inline-block' }} />
                         {m.name}
                       </span>
                       <span style={{ color: m.color, fontWeight: 700 }}>{fmt(m.value)}</span>
                     </div>
-                    <div style={{ background: '#e5e7eb', borderRadius: 99, height: 6 }}>
+                    <div style={{ background: isDark ? '#334155' : '#e9ecef', borderRadius: 99, height: 6 }}>
                       <div style={{ width: `${pct(m.value, methodTotal)}%`, height: '100%', borderRadius: 99, background: m.color }} />
                     </div>
                   </div>
@@ -341,16 +456,32 @@ function OverviewTab({ from, to }) {
           )}
         </div>
 
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Finance Position</div>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Liquid Financial Position</div>
           {[
-            { label: 'Account Balance',  value: fmt(data.totalAccountBalance), color: C.blue, icon: '🏦' },
-            { label: 'Total Outstanding',value: fmt(data.totalOutstanding),    color: C.red,  icon: '⚠️' },
-            { label: 'Net Cash Flow',    value: fmt(data.netCashFlow),         color: data.netCashFlow >= 0 ? C.green : C.red, icon: data.netCashFlow >= 0 ? '📈' : '📉' },
+            { label: 'Active Account Balance',   value: fmt(data.totalAccountBalance), color: BT.primary, icon: '🏦' },
+            { label: 'Total Pending Receivable', value: fmt(data.totalOutstanding),    color: BT.danger,  icon: '⚠️' },
+            { label: 'Current Net Cash Flow',    value: fmt(data.netCashFlow),         color: data.netCashFlow >= 0 ? BT.success : BT.danger, icon: data.netCashFlow >= 0 ? '📈' : '📉' },
           ].map(item => (
-            <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#f8fafc', borderRadius: 10, borderLeft: `3px solid ${item.color}`, marginBottom: 10 }}>
-              <span style={{ fontSize: 13, color: '#6b7280' }}>{item.icon} {item.label}</span>
-              <span style={{ fontWeight: 700, fontSize: 15, color: item.color }}>{item.value}</span>
+            <div
+              key={item.label}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '12px 16px',
+                background: isDark ? '#1e293b' : '#f8f9fa',
+                borderRadius: 10,
+                borderLeft: `4px solid ${item.color}`,
+                marginBottom: 10,
+              }}
+            >
+              <span style={{ fontSize: 13, color: isDark ? '#cbd5e1' : '#495057', fontWeight: 600 }}>
+                {item.icon} {item.label}
+              </span>
+              <span style={{ fontWeight: 800, fontSize: 15, color: item.color }}>
+                {item.value}
+              </span>
             </div>
           ))}
         </div>
@@ -359,16 +490,19 @@ function OverviewTab({ from, to }) {
   );
 }
 
-// ─── Sales by Customer ─────────────────────────────────────────────────────────
-function SalesTab({ from, to }) {
+// ─── Sales Tab ────────────────────────────────────────────────────────────────
+function SalesTab({ from, to, isDark }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setRows(await getReportSalesByCustomer({ from, to })); }
-    catch { setRows([]); }
+    try {
+      setRows(await getReportSalesByCustomer({ from, to }));
+    } catch {
+      setRows([]);
+    }
     setLoading(false);
   }, [from, to]);
 
@@ -388,59 +522,74 @@ function SalesTab({ from, to }) {
     Outstanding: r.totalOutstanding,
   }));
 
-  if (loading) return <Loader />;
+  const gridColor = isDark ? '#334155' : '#e9ecef';
+  const textColor = isDark ? '#94a3b8' : '#6c757d';
+
+  if (loading) return <Loader isDark={isDark} />;
 
   return (
     <div>
       {chartData.length > 0 && (
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Revenue vs Collected vs Outstanding — Top {chartData.length} Customers</div>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Revenue vs Collected vs Outstanding — Top {chartData.length} Customers</div>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 28 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} angle={-20} textAnchor="end" />
-              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+            <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 28 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+              <XAxis dataKey="name" tick={{ fontSize: 10, fill: textColor }} axisLine={false} tickLine={false} angle={-20} textAnchor="end" />
+              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
               <Tooltip content={<ChartTip />} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Revenue"     fill={C.green}  radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Collected"   fill={C.purple} radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Outstanding" fill={C.red}    radius={[4, 4, 0, 0]} />
+              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
+              <Bar dataKey="Revenue"     fill={BT.success} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Collected"   fill={BT.primary} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Outstanding" fill={BT.danger}  radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       )}
 
-      <div style={s.panel}>
+      <div style={styles.panelCard(isDark)}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-          <div style={s.panelTitle}>Customer Breakdown</div>
-          <input style={s.search} placeholder="Search customer…" value={search} onChange={e => setSearch(e.target.value)} />
+          <div style={styles.panelTitle(isDark)}>Customer Sales Breakdown ({filtered.length})</div>
+          <input
+            style={styles.searchBox(isDark)}
+            placeholder="Search customer name…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
-        {filtered.length === 0 ? <Empty msg="No sales found in this period." /> : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={s.table}>
+
+        {filtered.length === 0 ? <Empty msg="No sales records found in this period." isDark={isDark} /> : (
+          <div style={{ overflowX: 'auto', borderRadius: 8, border: `1px solid ${isDark ? '#334155' : '#dee2e6'}` }}>
+            <table style={styles.table}>
               <thead>
-                <tr>{['#', 'Customer', 'Sales', 'Revenue', 'Collected', 'Outstanding', 'Paid', 'Partial', 'Pending'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+                <tr>
+                  {['#', 'Customer Name', 'Orders', 'Revenue', 'Collected', 'Outstanding', 'Paid', 'Partial', 'Pending'].map(h => (
+                    <th key={h} style={styles.th(isDark)}>{h}</th>
+                  ))}
+                </tr>
               </thead>
               <tbody>
                 {filtered.map((r, i) => (
-                  <tr key={r.customerId} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                    <td style={{ ...s.td, color: '#9ca3af', textAlign: 'center' }}>{i + 1}</td>
-                    <td style={s.td}><b style={{ color: '#1e2a3b' }}>{r.customerName}</b></td>
-                    <td style={{ ...s.td, textAlign: 'center' }}>{r.salesCount}</td>
-                    <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: C.green }}>{fmt(r.totalRevenue)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: C.purple }}>{fmt(r.totalCollected)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: r.totalOutstanding > 0 ? C.red : '#9ca3af' }}>{fmt(r.totalOutstanding)}</td>
-                    <td style={{ ...s.td, textAlign: 'center' }}><Badge color={C.green}  bg="#dcfce7">{r.paidCount}</Badge></td>
-                    <td style={{ ...s.td, textAlign: 'center' }}><Badge color="#d97706" bg="#fef3c7">{r.partialCount}</Badge></td>
-                    <td style={{ ...s.td, textAlign: 'center' }}><Badge color={C.red}   bg="#fee2e2">{r.pendingCount}</Badge></td>
+                  <tr key={r.customerId} style={styles.tr(isDark, i)}>
+                    <td style={{ ...styles.td(isDark), color: isDark ? '#64748b' : '#9ca3af', textAlign: 'center' }}>{i + 1}</td>
+                    <td style={styles.td(isDark)}><b style={{ color: isDark ? '#f8fafc' : '#212529' }}>{r.customerName}</b></td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'center', fontWeight: 600 }}>{r.salesCount}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 700, color: BT.success }}>{fmt(r.totalRevenue)}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.primary, fontWeight: 600 }}>{fmt(r.totalCollected)}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: r.totalOutstanding > 0 ? BT.danger : (isDark ? '#64748b' : '#9ca3af'), fontWeight: 600 }}>
+                      {fmt(r.totalOutstanding)}
+                    </td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'center' }}><Badge color={BT.success} bg={isDark ? '#052c17' : '#d1e7dd'}>{r.paidCount}</Badge></td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'center' }}><Badge color={BT.warning} bg={isDark ? '#332701' : '#fff3cd'}>{r.partialCount}</Badge></td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'center' }}><Badge color={BT.danger}  bg={isDark ? '#2c0b0e' : '#f8d7da'}>{r.pendingCount}</Badge></td>
                   </tr>
                 ))}
-                <tr style={{ background: '#1e2a3b', fontWeight: 700 }}>
-                  <td style={{ ...s.td, color: '#7a9cc0' }} colSpan={2}>TOTALS</td>
-                  <td style={{ ...s.td, textAlign: 'center', color: '#fff' }}>{totals.sales}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#34d399' }}>{fmt(totals.revenue)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#a78bfa' }}>{fmt(totals.collected)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#f87171' }}>{fmt(totals.outstanding)}</td>
+                <tr style={{ background: isDark ? '#1e293b' : '#212529', fontWeight: 700 }}>
+                  <td style={{ ...styles.td(isDark), color: '#94a3b8' }} colSpan={2}>TOTALS</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'center', color: '#fff' }}>{totals.sales}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#34d399' }}>{fmt(totals.revenue)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#60a5fa' }}>{fmt(totals.collected)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#f87171' }}>{fmt(totals.outstanding)}</td>
                   <td colSpan={3} />
                 </tr>
               </tbody>
@@ -452,22 +601,28 @@ function SalesTab({ from, to }) {
   );
 }
 
-// ─── Cash Flow ─────────────────────────────────────────────────────────────────
-function CashFlowTab({ from, to }) {
+// ─── Cash Flow Tab ─────────────────────────────────────────────────────────────
+function CashFlowTab({ from, to, isDark }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setRows(await getReportMonthlyCashFlow({ from, to })); }
-    catch { setRows([]); }
+    try {
+      setRows(await getReportMonthlyCashFlow({ from, to }));
+    } catch {
+      setRows([]);
+    }
     setLoading(false);
   }, [from, to]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <Loader />;
-  if (rows.length === 0) return <Empty msg="No data found in this period." />;
+  const gridColor = isDark ? '#334155' : '#e9ecef';
+  const textColor = isDark ? '#94a3b8' : '#6c757d';
+
+  if (loading) return <Loader isDark={isDark} />;
+  if (rows.length === 0) return <Empty msg="No cash flow data found in this period." isDark={isDark} />;
 
   const totals = {
     revenue:   rows.reduce((a, r) => a + r.revenue, 0),
@@ -481,92 +636,96 @@ function CashFlowTab({ from, to }) {
 
   return (
     <div>
-      <div style={s.panel}>
-        <div style={s.panelTitle}>Revenue vs Collected — Monthly Trend</div>
+      <div style={styles.panelCard(isDark)}>
+        <div style={styles.panelTitle(isDark)}>Revenue vs Collected — Monthly Trajectory</div>
         <ResponsiveContainer width="100%" height={280}>
-          <AreaChart data={shortRows} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+          <AreaChart data={shortRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
             <defs>
               <linearGradient id="gRev"  x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor={C.green}  stopOpacity={0.25} />
-                <stop offset="95%" stopColor={C.green}  stopOpacity={0.02} />
+                <stop offset="5%"  stopColor={BT.success} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={BT.success} stopOpacity={0.02} />
               </linearGradient>
               <linearGradient id="gColl" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor={C.purple} stopOpacity={0.25} />
-                <stop offset="95%" stopColor={C.purple} stopOpacity={0.02} />
+                <stop offset="5%"  stopColor={BT.primary} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={BT.primary} stopOpacity={0.02} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-            <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-            <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+            <XAxis dataKey="name" tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} />
+            <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
             <Tooltip content={<ChartTip />} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Area type="monotone" dataKey="revenue"   name="Revenue"   stroke={C.green}  fill="url(#gRev)"  strokeWidth={2.5} dot={{ r: 4 }} />
-            <Area type="monotone" dataKey="collected" name="Collected" stroke={C.purple} fill="url(#gColl)" strokeWidth={2.5} dot={{ r: 4 }} />
+            <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
+            <Area type="monotone" dataKey="revenue"   name="Revenue"   stroke={BT.success} fill="url(#gRev)"  strokeWidth={2.5} dot={{ r: 4 }} />
+            <Area type="monotone" dataKey="collected" name="Collected" stroke={BT.primary} fill="url(#gColl)" strokeWidth={2.5} dot={{ r: 4 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
 
-      <div style={s.twoCol}>
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Monthly Expenses — Stacked</div>
+      <div style={styles.twoCol}>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Monthly Expenses Stacked Breakdown</div>
           <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={shortRows} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+            <BarChart data={shortRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+              <XAxis dataKey="name" tick={{ fontSize: 10, fill: textColor }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
               <Tooltip content={<ChartTip />} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="purchaseExpenses" name="Purchases" stackId="a" fill={C.amber} />
-              <Bar dataKey="wageExpenses"     name="Wages"     stackId="a" fill={C.cyan} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="purchaseExpenses" name="Purchases" stackId="a" fill={BT.orange} />
+              <Bar dataKey="wageExpenses"     name="Wages"     stackId="a" fill={BT.purple} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Net Cash Flow — Monthly</div>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Monthly Net Cash Flow</div>
           <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={shortRows} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+            <BarChart data={shortRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+              <XAxis dataKey="name" tick={{ fontSize: 10, fill: textColor }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
               <Tooltip content={<ChartTip />} />
               <Bar dataKey="netCashFlow" name="Net Cash Flow" radius={[4, 4, 0, 0]}>
-                {shortRows.map((r, i) => <Cell key={i} fill={r.netCashFlow >= 0 ? C.green : C.red} />)}
+                {shortRows.map((r, i) => <Cell key={i} fill={r.netCashFlow >= 0 ? BT.success : BT.danger} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      <div style={s.panel}>
-        <div style={s.panelTitle}>Monthly Summary Table</div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={s.table}>
+      <div style={styles.panelCard(isDark)}>
+        <div style={styles.panelTitle(isDark)}>Monthly Summary Table</div>
+        <div style={{ overflowX: 'auto', borderRadius: 8, border: `1px solid ${isDark ? '#334155' : '#dee2e6'}` }}>
+          <table style={styles.table}>
             <thead>
-              <tr>{['Month', 'Revenue', 'Collected', 'Purchases', 'Wages', 'Total Exp.', 'Net Cash Flow'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+              <tr>
+                {['Month', 'Revenue', 'Collected', 'Purchases', 'Wages', 'Total Exp.', 'Net Cash Flow'].map(h => (
+                  <th key={h} style={styles.th(isDark)}>{h}</th>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={`${r.year}-${r.month}`} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                  <td style={{ ...s.td, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.monthName}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: C.green,  fontWeight: 600 }}>{fmt(r.revenue)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: C.purple, fontWeight: 600 }}>{fmt(r.collected)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: C.amber  }}>{fmt(r.purchaseExpenses)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: C.cyan   }}>{fmt(r.wageExpenses)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: C.red    }}>{fmt(r.totalExpenses)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: r.netCashFlow >= 0 ? C.green : C.red }}>
+                <tr key={`${r.year}-${r.month}`} style={styles.tr(isDark, i)}>
+                  <td style={{ ...styles.td(isDark), fontWeight: 700, whiteSpace: 'nowrap' }}>{r.monthName}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.success, fontWeight: 700 }}>{fmt(r.revenue)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.primary, fontWeight: 700 }}>{fmt(r.collected)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.orange }}>{fmt(r.purchaseExpenses)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.purple }}>{fmt(r.wageExpenses)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.danger }}>{fmt(r.totalExpenses)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 800, color: r.netCashFlow >= 0 ? BT.success : BT.danger }}>
                     {r.netCashFlow >= 0 ? '+' : ''}{fmt(r.netCashFlow)}
                   </td>
                 </tr>
               ))}
-              <tr style={{ background: '#1e2a3b', fontWeight: 700 }}>
-                <td style={{ ...s.td, color: '#7a9cc0' }}>TOTAL</td>
-                <td style={{ ...s.td, textAlign: 'right', color: '#34d399' }}>{fmt(totals.revenue)}</td>
-                <td style={{ ...s.td, textAlign: 'right', color: '#a78bfa' }}>{fmt(totals.collected)}</td>
-                <td style={{ ...s.td, textAlign: 'right', color: '#fbbf24' }}>{fmt(totals.purchases)}</td>
-                <td style={{ ...s.td, textAlign: 'right', color: '#67e8f9' }}>{fmt(totals.wages)}</td>
-                <td style={{ ...s.td, textAlign: 'right', color: '#f87171' }}>{fmt(totals.expenses)}</td>
-                <td style={{ ...s.td, textAlign: 'right', color: totals.net >= 0 ? '#34d399' : '#f87171' }}>
+              <tr style={{ background: isDark ? '#1e293b' : '#212529', fontWeight: 700 }}>
+                <td style={{ ...styles.td(isDark), color: '#94a3b8' }}>TOTAL</td>
+                <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#34d399' }}>{fmt(totals.revenue)}</td>
+                <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#60a5fa' }}>{fmt(totals.collected)}</td>
+                <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#fb923c' }}>{fmt(totals.purchases)}</td>
+                <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#c084fc' }}>{fmt(totals.wages)}</td>
+                <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#f87171' }}>{fmt(totals.expenses)}</td>
+                <td style={{ ...styles.td(isDark), textAlign: 'right', color: totals.net >= 0 ? '#34d399' : '#f87171' }}>
                   {totals.net >= 0 ? '+' : ''}{fmt(totals.net)}
                 </td>
               </tr>
@@ -578,8 +737,8 @@ function CashFlowTab({ from, to }) {
   );
 }
 
-// ─── Payroll ──────────────────────────────────────────────────────────────────
-function PayrollTab({ from, to }) {
+// ─── Payroll Tab ──────────────────────────────────────────────────────────────
+function PayrollTab({ from, to, isDark }) {
   const [data,     setData]     = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [expanded, setExpanded] = useState({});
@@ -587,23 +746,28 @@ function PayrollTab({ from, to }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setData(await getReportPayroll({ from, to })); }
-    catch { setData(null); }
+    try {
+      setData(await getReportPayroll({ from, to }));
+    } catch {
+      setData(null);
+    }
     setLoading(false);
   }, [from, to]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <Loader />;
-  if (!data)   return <Empty msg="Could not load payroll data." />;
+  const gridColor = isDark ? '#334155' : '#e9ecef';
+  const textColor = isDark ? '#94a3b8' : '#6c757d';
+
+  if (loading) return <Loader isDark={isDark} />;
+  if (!data)   return <Empty msg="Could not load payroll records." isDark={isDark} />;
 
   const toggle = id => setExpanded(e => ({ ...e, [id]: !e[id] }));
 
-  const workers   = (data.byWorker || []).filter(w => w.workerName.toLowerCase().includes(search.toLowerCase()));
-  const monthly   = data.monthlyBreakdown || [];
+  const workers = (data.byWorker || []).filter(w => w.workerName.toLowerCase().includes(search.toLowerCase()));
+  const monthly = data.monthlyBreakdown || [];
   const showMonthly = monthly.length > 1;
 
-  // Charts
   const workerBar = workers.slice(0, 12).map(w => ({
     name:   w.workerName.length > 13 ? w.workerName.slice(0, 13) + '…' : w.workerName,
     Gross:  w.totalGross,
@@ -625,51 +789,79 @@ function PayrollTab({ from, to }) {
 
   return (
     <div>
-      {/* KPI Row */}
-      <div style={s.kpiGrid}>
+      {/* ── KPI Row ── */}
+      <div style={styles.kpiGrid}>
         {[
-          { label: 'Total Gross',       value: fmt(data.totalGross),            color: C.blue,   bg: '#eff6ff', icon: '💼' },
-          { label: 'Total Deductions',  value: fmt(data.totalDeductions),       color: C.red,    bg: '#fef2f2', icon: '✂️' },
-          { label: 'Total Net Pay',     value: fmt(data.totalNet),              color: C.green,  bg: '#ecfdf5', icon: '💵' },
-          { label: 'Total Advances',    value: fmt(data.totalAdvances),         color: C.amber,  bg: '#fffbeb', icon: '📋' },
-          { label: 'Unsettled Advances',value: fmt(data.totalUnsettledAdvances),color: C.orange, bg: '#fff7ed', icon: '⚠️' },
-          { label: 'Workers Paid',      value: data.workerCount,                color: C.purple, bg: '#f5f3ff', icon: '👷' },
+          { label: 'Total Gross Wages',   value: fmt(data.totalGross),            tag: 'GROSS PAY', icon: '💼', gradient: 'linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%)' },
+          { label: 'Total Deductions',    value: fmt(data.totalDeductions),       tag: 'DEDUCTIONS', icon: '✂️', gradient: 'linear-gradient(135deg, #dc3545 0%, #b02a37 100%)' },
+          { label: 'Total Net Disbursed', value: fmt(data.totalNet),              tag: 'NET PAY', icon: '💵', gradient: 'linear-gradient(135deg, #198754 0%, #157347 100%)' },
+          { label: 'Advances Issued',     value: fmt(data.totalAdvances),         tag: 'ADVANCES', icon: '📋', gradient: 'linear-gradient(135deg, #ffc107 0%, #d39e00 100%)' },
+          { label: 'Unsettled Advances',  value: fmt(data.totalUnsettledAdvances),tag: 'PENDING', icon: '⚠️', gradient: 'linear-gradient(135deg, #fd7e14 0%, #d96309 100%)' },
+          { label: 'Active Workers Paid', value: data.workerCount,                tag: 'WORKFORCE', icon: '👷', gradient: 'linear-gradient(135deg, #6f42c1 0%, #59359a 100%)' },
         ].map(k => (
-          <div key={k.label} style={{ ...s.kpiCard, background: k.bg, borderLeft: `4px solid ${k.color}` }}>
-            <div style={s.kpiIcon}>{k.icon}</div>
+          <div
+            key={k.label}
+            style={{
+              background: k.gradient,
+              borderRadius: 12,
+              padding: '16px 20px',
+              color: '#fff',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
             <div>
-              <div style={{ ...s.kpiVal, color: k.color }}>{k.value}</div>
-              <div style={s.kpiLabel}>{k.label}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', opacity: 0.85, marginBottom: 4 }}>
+                {k.tag}
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1 }}>
+                {k.value}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 500, opacity: 0.9, marginTop: 4 }}>
+                {k.label}
+              </div>
+            </div>
+            <div style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 22,
+            }}>
+              {k.icon}
             </div>
           </div>
         ))}
       </div>
 
-      {/* Charts */}
-      <div style={s.twoCol}>
-        {/* Gross vs Net per worker */}
+      {/* ── Charts ── */}
+      <div style={styles.twoCol}>
         {workerBar.length > 0 && (
-          <div style={s.panel}>
-            <div style={s.panelTitle}>Gross vs Net Pay — Per Worker</div>
+          <div style={styles.panelCard(isDark)}>
+            <div style={styles.panelTitle(isDark)}>Gross vs Net Pay per Worker</div>
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={workerBar} margin={{ top: 4, right: 16, left: 0, bottom: 28 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} angle={-25} textAnchor="end" />
-                <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+              <BarChart data={workerBar} margin={{ top: 8, right: 16, left: 0, bottom: 28 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                <XAxis dataKey="name" tick={{ fontSize: 9, fill: textColor }} axisLine={false} tickLine={false} angle={-25} textAnchor="end" />
+                <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
                 <Tooltip content={<ChartTip />} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Gross"      fill={C.blue}  radius={[3, 3, 0, 0]} />
-                <Bar dataKey="Net"        fill={C.green} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="Deductions" fill={C.red}   radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Gross"      fill={BT.primary} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Net"        fill={BT.success} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Deductions" fill={BT.danger}  radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         )}
 
-        {/* Deductions pie OR monthly trend */}
         {deductionsPie.length > 0 ? (
-          <div style={s.panel}>
-            <div style={s.panelTitle}>Deductions Breakdown — By Worker</div>
+          <div style={styles.panelCard(isDark)}>
+            <div style={styles.panelTitle(isDark)}>Deductions Distribution by Worker</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
               <ResponsiveContainer width={190} height={190}>
                 <PieChart>
@@ -682,7 +874,7 @@ function PayrollTab({ from, to }) {
               <div style={{ flex: 1, maxHeight: 190, overflowY: 'auto' }}>
                 {deductionsPie.map(d => (
                   <div key={d.name} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 12 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#374151' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: isDark ? '#cbd5e1' : '#374151' }}>
                       <span style={{ width: 9, height: 9, borderRadius: 2, background: d.color, display: 'inline-block', flexShrink: 0 }} />
                       {d.name}
                     </span>
@@ -693,178 +885,97 @@ function PayrollTab({ from, to }) {
             </div>
           </div>
         ) : showMonthly && (
-          <div style={s.panel}>
-            <div style={s.panelTitle}>Monthly Payroll Summary</div>
+          <div style={styles.panelCard(isDark)}>
+            <div style={styles.panelTitle(isDark)}>Monthly Payroll Summary</div>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={monthlyBar} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+              <BarChart data={monthlyBar} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: textColor }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
                 <Tooltip content={<ChartTip />} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Gross"    fill={C.blue}  radius={[3, 3, 0, 0]} />
-                <Bar dataKey="Net"      fill={C.green} radius={[3, 3, 0, 0]} />
-                <Bar dataKey="Advances" fill={C.amber} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Gross"    fill={BT.primary} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Net"      fill={BT.success} radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Advances" fill={BT.warning} radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         )}
       </div>
 
-      {/* Monthly area trend (if multiple months) */}
-      {showMonthly && deductionsPie.length > 0 && (
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Monthly Payroll Trend</div>
-          <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={monthlyBar} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-              <defs>
-                <linearGradient id="gGross" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor={C.blue}  stopOpacity={0.25} />
-                  <stop offset="95%" stopColor={C.blue}  stopOpacity={0.02} />
-                </linearGradient>
-                <linearGradient id="gNet" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor={C.green} stopOpacity={0.25} />
-                  <stop offset="95%" stopColor={C.green} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
-              <Tooltip content={<ChartTip />} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="Gross" stroke={C.blue}  fill="url(#gGross)" strokeWidth={2} dot={{ r: 3 }} />
-              <Area type="monotone" dataKey="Net"   stroke={C.green} fill="url(#gNet)"   strokeWidth={2} dot={{ r: 3 }} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {/* Worker Detail Table */}
-      <div style={s.panel}>
+      {/* ── Worker Detail Table ── */}
+      <div style={styles.panelCard(isDark)}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-          <div style={s.panelTitle}>Worker Payroll Detail</div>
-          <input style={s.search} placeholder="Search worker…" value={search} onChange={e => setSearch(e.target.value)} />
+          <div style={styles.panelTitle(isDark)}>Staff Payroll Directory ({workers.length})</div>
+          <input
+            style={styles.searchBox(isDark)}
+            placeholder="Search worker name…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
 
-        {workers.length === 0 ? <Empty msg="No payroll records in this period." /> : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={s.table}>
+        {workers.length === 0 ? <Empty msg="No payroll records in this period." isDark={isDark} /> : (
+          <div style={{ overflowX: 'auto', borderRadius: 8, border: `1px solid ${isDark ? '#334155' : '#dee2e6'}` }}>
+            <table style={styles.table}>
               <thead>
                 <tr>
-                  {['Worker', 'Type', 'Payments', 'Gross', 'Deductions', 'Net Pay', 'Advances', 'Unsettled', ''].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
+                  {['Worker', 'Category', 'Payments', 'Gross Pay', 'Deductions', 'Net Pay', 'Advances', 'Unsettled', 'Detail'].map(h => (
+                    <th key={h} style={styles.th(isDark)}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {workers.map((w, i) => (
-                  <>
-                    <tr key={w.workerId} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                      <td style={{ ...s.td, fontWeight: 600 }}>{w.workerName}</td>
-                      <td style={s.td}>
-                        <Badge color={w.workerType === 'Management' ? '#7030A0' : C.blue} bg={w.workerType === 'Management' ? '#F3E8FF' : '#EBF3FB'}>
-                          {w.workerType}
-                        </Badge>
-                      </td>
-                      <td style={{ ...s.td, textAlign: 'center' }}>{w.paymentsCount}</td>
-                      <td style={{ ...s.td, textAlign: 'right', color: C.blue }}>{fmt(w.totalGross)}</td>
-                      <td style={{ ...s.td, textAlign: 'right', color: w.totalDeductions > 0 ? C.red : '#9ca3af' }}>
-                        {w.totalDeductions > 0 ? `-${fmt(w.totalDeductions)}` : '—'}
-                      </td>
-                      <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: C.green }}>{fmt(w.totalNet)}</td>
-                      <td style={{ ...s.td, textAlign: 'right', color: C.amber }}>{w.totalAdvances > 0 ? fmt(w.totalAdvances) : '—'}</td>
-                      <td style={{ ...s.td, textAlign: 'right', color: w.unsettledAdvances > 0 ? C.orange : '#9ca3af' }}>
-                        {w.unsettledAdvances > 0 ? fmt(w.unsettledAdvances) : '—'}
-                      </td>
-                      <td style={{ ...s.td, textAlign: 'center' }}>
-                        {(w.payments.length > 0 || w.advances.length > 0) && (
-                          <button onClick={() => toggle(w.workerId)}
-                            style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 11, color: '#6b7280' }}>
-                            {expanded[w.workerId] ? '▲ Hide' : '▼ Detail'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-
-                    {/* Expanded detail */}
-                    {expanded[w.workerId] && (
-                      <tr key={`${w.workerId}-detail`}>
-                        <td colSpan={9} style={{ padding: '0 16px 12px', background: '#f8fafc' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12, paddingTop: 10 }}>
-                            {/* Wage Payments */}
-                            {w.payments.length > 0 && (
-                              <div>
-                                <div style={{ fontWeight: 600, fontSize: 12, color: '#374151', marginBottom: 6 }}>Wage Payments</div>
-                                <table style={{ ...s.table, fontSize: 12 }}>
-                                  <thead>
-                                    <tr>
-                                      {['Period', 'Gross', 'Deduct', 'Net', 'Paid On'].map(h => (
-                                        <th key={h} style={{ ...s.th, background: '#e5e7eb', fontSize: 10 }}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {w.payments.map((p, pi) => (
-                                      <tr key={p.id} style={pi % 2 === 0 ? { background: '#fff' } : { background: '#f1f5f9' }}>
-                                        <td style={{ ...s.td, fontSize: 11, whiteSpace: 'nowrap' }}>
-                                          {fmtShort(p.periodFrom)} – {fmtShort(p.periodTo)}
-                                        </td>
-                                        <td style={{ ...s.td, textAlign: 'right' }}>{fmt(p.grossAmount)}</td>
-                                        <td style={{ ...s.td, textAlign: 'right', color: C.red }}>{p.deductions > 0 ? fmt(p.deductions) : '—'}</td>
-                                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: C.green }}>{fmt(p.netAmount)}</td>
-                                        <td style={{ ...s.td, fontSize: 11, color: '#6b7280' }}>{fmtShort(p.paidAt)}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-
-                            {/* Advances */}
-                            {w.advances.length > 0 && (
-                              <div>
-                                <div style={{ fontWeight: 600, fontSize: 12, color: '#374151', marginBottom: 6 }}>Advances</div>
-                                <table style={{ ...s.table, fontSize: 12 }}>
-                                  <thead>
-                                    <tr>
-                                      {['Date', 'Amount', 'Status', 'Notes'].map(h => (
-                                        <th key={h} style={{ ...s.th, background: '#e5e7eb', fontSize: 10 }}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {w.advances.map((a, ai) => (
-                                      <tr key={a.id} style={ai % 2 === 0 ? { background: '#fff' } : { background: '#f1f5f9' }}>
-                                        <td style={{ ...s.td, fontSize: 11 }}>{fmtShort(a.advanceDate)}</td>
-                                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 600, color: C.amber }}>{fmt(a.amount)}</td>
-                                        <td style={s.td}>
-                                          <Badge color={a.isSettled ? C.green : C.orange} bg={a.isSettled ? '#dcfce7' : '#fff7ed'}>
-                                            {a.isSettled ? 'Settled' : 'Pending'}
-                                          </Badge>
-                                        </td>
-                                        <td style={{ ...s.td, color: '#9ca3af', fontSize: 11 }}>{a.notes || '—'}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr key={w.workerId} style={styles.tr(isDark, i)}>
+                    <td style={{ ...styles.td(isDark), fontWeight: 700 }}>{w.workerName}</td>
+                    <td style={styles.td(isDark)}>
+                      <Badge
+                        color={w.workerType === 'Management' ? BT.purple : BT.primary}
+                        bg={w.workerType === 'Management' ? (isDark ? '#2b1b4d' : '#f3e8ff') : (isDark ? '#0c2e59' : '#e7f1ff')}
+                      >
+                        {w.workerType}
+                      </Badge>
+                    </td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'center', fontWeight: 600 }}>{w.paymentsCount}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.primary, fontWeight: 700 }}>{fmt(w.totalGross)}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: w.totalDeductions > 0 ? BT.danger : (isDark ? '#64748b' : '#9ca3af') }}>
+                      {w.totalDeductions > 0 ? `-${fmt(w.totalDeductions)}` : '—'}
+                    </td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 800, color: BT.success }}>{fmt(w.totalNet)}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.warning }}>{w.totalAdvances > 0 ? fmt(w.totalAdvances) : '—'}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: w.unsettledAdvances > 0 ? BT.orange : (isDark ? '#64748b' : '#9ca3af') }}>
+                      {w.unsettledAdvances > 0 ? fmt(w.unsettledAdvances) : '—'}
+                    </td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'center' }}>
+                      {(w.payments.length > 0 || w.advances.length > 0) && (
+                        <button
+                          onClick={() => toggle(w.workerId)}
+                          style={{
+                            background: isDark ? '#1e293b' : '#ffffff',
+                            border: `1px solid ${isDark ? '#334155' : '#ced4da'}`,
+                            borderRadius: 6,
+                            padding: '4px 10px',
+                            cursor: 'pointer',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: isDark ? '#cbd5e1' : '#495057',
+                          }}
+                        >
+                          {expanded[w.workerId] ? '▲ Close' : '▼ View'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
                 ))}
-
-                {/* Totals */}
-                <tr style={{ background: '#1e2a3b', fontWeight: 700 }}>
-                  <td colSpan={2} style={{ ...s.td, color: '#7a9cc0' }}>TOTALS ({workers.length} workers)</td>
-                  <td style={{ ...s.td, textAlign: 'center', color: '#fff' }}>{workers.reduce((a, w) => a + w.paymentsCount, 0)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#93c5fd' }}>{fmt(workers.reduce((a, w) => a + w.totalGross, 0))}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#f87171' }}>{fmt(workers.reduce((a, w) => a + w.totalDeductions, 0))}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#34d399' }}>{fmt(workers.reduce((a, w) => a + w.totalNet, 0))}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#fbbf24' }}>{fmt(workers.reduce((a, w) => a + w.totalAdvances, 0))}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#fb923c' }}>{fmt(workers.reduce((a, w) => a + w.unsettledAdvances, 0))}</td>
+                <tr style={{ background: isDark ? '#1e293b' : '#212529', fontWeight: 700 }}>
+                  <td colSpan={2} style={{ ...styles.td(isDark), color: '#94a3b8' }}>TOTALS ({workers.length} workers)</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'center', color: '#fff' }}>{workers.reduce((a, w) => a + w.paymentsCount, 0)}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#93c5fd' }}>{fmt(workers.reduce((a, w) => a + w.totalGross, 0))}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#f87171' }}>{fmt(workers.reduce((a, w) => a + w.totalDeductions, 0))}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#34d399' }}>{fmt(workers.reduce((a, w) => a + w.totalNet, 0))}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#fbbf24' }}>{fmt(workers.reduce((a, w) => a + w.totalAdvances, 0))}</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#fb923c' }}>{fmt(workers.reduce((a, w) => a + w.unsettledAdvances, 0))}</td>
                   <td />
                 </tr>
               </tbody>
@@ -872,49 +983,12 @@ function PayrollTab({ from, to }) {
           </div>
         )}
       </div>
-
-      {/* Monthly Summary Table */}
-      {showMonthly && (
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Monthly Payroll Breakdown</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={s.table}>
-              <thead>
-                <tr>{['Month', 'Workers', 'Gross', 'Deductions', 'Net Pay', 'Advances'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {monthly.map((m, i) => (
-                  <tr key={`${m.year}-${m.month}`} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                    <td style={{ ...s.td, fontWeight: 600 }}>{m.monthName}</td>
-                    <td style={{ ...s.td, textAlign: 'center' }}>{m.workerCount}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: C.blue }}>{fmt(m.gross)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: m.deductions > 0 ? C.red : '#9ca3af' }}>
-                      {m.deductions > 0 ? fmt(m.deductions) : '—'}
-                    </td>
-                    <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: C.green }}>{fmt(m.net)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: m.advances > 0 ? C.amber : '#9ca3af' }}>
-                      {m.advances > 0 ? fmt(m.advances) : '—'}
-                    </td>
-                  </tr>
-                ))}
-                <tr style={{ background: '#1e2a3b', fontWeight: 700 }}>
-                  <td colSpan={2} style={{ ...s.td, color: '#7a9cc0' }}>TOTAL</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#93c5fd' }}>{fmt(data.totalGross)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#f87171' }}>{fmt(data.totalDeductions)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#34d399' }}>{fmt(data.totalNet)}</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#fbbf24' }}>{fmt(data.totalAdvances)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
-// ─── Account Ledger ───────────────────────────────────────────────────────────
-function LedgerTab({ from, to }) {
+// ─── Account Ledger Tab ───────────────────────────────────────────────────────
+function LedgerTab({ from, to, isDark }) {
   const [accounts,    setAccounts]    = useState([]);
   const [accountId,   setAccountId]   = useState('');
   const [statement,   setStatement]   = useState(null);
@@ -923,7 +997,10 @@ function LedgerTab({ from, to }) {
 
   useEffect(() => {
     getAccounts()
-      .then(a => { setAccounts(a); if (a.length > 0) setAccountId(String(a[0].id)); })
+      .then(a => {
+        setAccounts(a);
+        if (a.length > 0) setAccountId(String(a[0].id));
+      })
       .catch(() => {})
       .finally(() => setAccsLoading(false));
   }, []);
@@ -931,15 +1008,21 @@ function LedgerTab({ from, to }) {
   const load = useCallback(async () => {
     if (!accountId) return;
     setLoading(true);
-    try { setStatement(await getReportAccountStatement({ accountId, from, to })); }
-    catch { setStatement(null); }
+    try {
+      setStatement(await getReportAccountStatement({ accountId, from, to }));
+    } catch {
+      setStatement(null);
+    }
     setLoading(false);
   }, [accountId, from, to]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (accsLoading) return <Loader />;
-  if (accounts.length === 0) return <Empty msg="No accounts found. Create accounts in Finance first." />;
+  const gridColor = isDark ? '#334155' : '#e9ecef';
+  const textColor = isDark ? '#94a3b8' : '#6c757d';
+
+  if (accsLoading) return <Loader isDark={isDark} />;
+  if (accounts.length === 0) return <Empty msg="No ledger accounts found. Configure accounts in Finance first." isDark={isDark} />;
 
   const credits = statement?.lines?.filter(l => l.type === 'Credit').reduce((a, l) => a + l.amount, 0) ?? 0;
   const debits  = statement?.lines?.filter(l => l.type === 'Debit' ).reduce((a, l) => a + l.amount, 0) ?? 0;
@@ -948,59 +1031,67 @@ function LedgerTab({ from, to }) {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <label style={{ fontWeight: 600, color: '#374151', fontSize: 14 }}>Account:</label>
-        <select style={s.acctSelect} value={accountId} onChange={e => setAccountId(e.target.value)}>
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.name} — {a.categoryName}</option>)}
+      <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <label style={{ fontWeight: 700, color: isDark ? '#f8fafc' : '#212529', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.8 }}>
+          Select Account:
+        </label>
+        <select
+          style={styles.acctSelect(isDark)}
+          value={accountId}
+          onChange={e => setAccountId(e.target.value)}
+        >
+          {accounts.map(a => (
+            <option key={a.id} value={a.id}>{a.name} — {a.categoryName}</option>
+          ))}
         </select>
       </div>
 
-      {loading && <Loader />}
+      {loading && <Loader isDark={isDark} />}
 
       {!loading && statement && (
         <>
           {statement.lines.length > 0 && (
-            <div style={s.twoCol}>
-              <div style={s.panel}>
-                <div style={s.panelTitle}>Running Balance</div>
+            <div style={styles.twoCol}>
+              <div style={styles.panelCard(isDark)}>
+                <div style={styles.panelTitle(isDark)}>Running Account Balance Trajectory</div>
                 <ResponsiveContainer width="100%" height={220}>
-                  <AreaChart data={lineData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+                  <AreaChart data={lineData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                     <defs>
                       <linearGradient id="gBal" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor={C.blue} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={C.blue} stopOpacity={0.02} />
+                        <stop offset="5%"  stopColor={BT.primary} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={BT.primary} stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                    <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={72} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: textColor }} axisLine={false} tickLine={false} />
+                    <YAxis tickFormatter={fmtK} tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={72} />
                     <Tooltip content={<ChartTip />} />
-                    <Area type="monotone" dataKey="Balance" stroke={C.blue} fill="url(#gBal)" strokeWidth={2.5} dot={{ r: 3 }} />
+                    <Area type="monotone" dataKey="Balance" stroke={BT.primary} fill="url(#gBal)" strokeWidth={2.5} dot={{ r: 3 }} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
 
-              <div style={s.panel}>
-                <div style={s.panelTitle}>Credits vs Debits</div>
+              <div style={styles.panelCard(isDark)}>
+                <div style={styles.panelTitle(isDark)}>Credits vs Debits Proportion</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
                   <ResponsiveContainer width={180} height={180}>
                     <PieChart>
                       <Pie data={ledgerPie} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
-                        {ledgerPie.map((_, i) => <Cell key={i} fill={[C.green, C.red][i]} />)}
+                        {ledgerPie.map((_, i) => <Cell key={i} fill={[BT.success, BT.danger][i]} />)}
                       </Pie>
                       <Tooltip content={<PieTip />} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div style={{ flex: 1 }}>
                     {[
-                      { label: 'Opening', value: statement.openingBalance, color: '#6b7280' },
-                      { label: 'Credits', value: credits,                  color: C.green   },
-                      { label: 'Debits',  value: debits,                   color: C.red     },
-                      { label: 'Closing', value: statement.closingBalance, color: statement.closingBalance >= 0 ? C.blue : C.red },
+                      { label: 'Opening Balance', value: statement.openingBalance, color: isDark ? '#94a3b8' : '#6c757d' },
+                      { label: 'Total Credits',   value: credits,                  color: BT.success },
+                      { label: 'Total Debits',    value: debits,                   color: BT.danger  },
+                      { label: 'Closing Balance', value: statement.closingBalance, color: statement.closingBalance >= 0 ? BT.primary : BT.danger },
                     ].map(item => (
                       <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 13 }}>
-                        <span style={{ color: '#6b7280' }}>{item.label}</span>
-                        <span style={{ fontWeight: 700, color: item.color }}>{fmt(item.value)}</span>
+                        <span style={{ color: isDark ? '#cbd5e1' : '#6c757d' }}>{item.label}</span>
+                        <span style={{ fontWeight: 800, color: item.color }}>{fmt(item.value)}</span>
                       </div>
                     ))}
                   </div>
@@ -1009,72 +1100,74 @@ function LedgerTab({ from, to }) {
             </div>
           )}
 
-          <div style={s.panel}>
+          <div style={styles.panelCard(isDark)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
               <div>
-                <div style={s.panelTitle}>{statement.accountName} — Statement</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>{statement.categoryName}</div>
+                <div style={styles.panelTitle(isDark)}>{statement.accountName} — Detailed Statement</div>
+                <div style={{ fontSize: 12, color: isDark ? '#94a3b8' : '#6c757d', fontWeight: 600 }}>Category: {statement.categoryName}</div>
               </div>
               <div style={{ display: 'flex', gap: 20 }}>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>Opening</div>
-                  <div style={{ fontWeight: 700 }}>{fmt(statement.openingBalance)}</div>
+                  <div style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#6c757d' }}>Opening Balance</div>
+                  <div style={{ fontWeight: 700, color: isDark ? '#f8fafc' : '#212529' }}>{fmt(statement.openingBalance)}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>Closing</div>
-                  <div style={{ fontWeight: 700, fontSize: 18, color: statement.closingBalance >= 0 ? C.green : C.red }}>
+                  <div style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#6c757d' }}>Closing Balance</div>
+                  <div style={{ fontWeight: 800, fontSize: 18, color: statement.closingBalance >= 0 ? BT.success : BT.danger }}>
                     {fmt(statement.closingBalance)}
                   </div>
                 </div>
               </div>
             </div>
-            {statement.lines.length === 0
-              ? <div style={{ color: '#9ca3af', fontSize: 13 }}>No transactions in this period.</div>
-              : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={s.table}>
-                    <thead>
-                      <tr>
-                        <th style={s.th}>Date</th>
-                        <th style={s.th}>Description</th>
-                        <th style={s.th}>Ref</th>
-                        <th style={{ ...s.th, textAlign: 'right' }}>Credit</th>
-                        <th style={{ ...s.th, textAlign: 'right' }}>Debit</th>
-                        <th style={{ ...s.th, textAlign: 'right' }}>Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr style={{ background: '#f8fafc' }}>
-                        <td style={s.td} colSpan={5}><span style={{ color: '#6b7280', fontSize: 12 }}>Opening Balance</span></td>
-                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 600 }}>{fmt(statement.openingBalance)}</td>
-                      </tr>
-                      {statement.lines.map((l, i) => (
-                        <tr key={l.id} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                          <td style={{ ...s.td, whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(l.date)}</td>
-                          <td style={{ ...s.td, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.description}</td>
-                          <td style={{ ...s.td, color: '#9ca3af', fontSize: 11 }}>{l.referenceNo || '—'}</td>
-                          <td style={{ ...s.td, textAlign: 'right', color: l.type === 'Credit' ? C.green : '#e5e7eb', fontWeight: l.type === 'Credit' ? 600 : 400 }}>
-                            {l.type === 'Credit' ? fmt(l.amount) : '—'}
-                          </td>
-                          <td style={{ ...s.td, textAlign: 'right', color: l.type === 'Debit' ? C.red : '#e5e7eb', fontWeight: l.type === 'Debit' ? 600 : 400 }}>
-                            {l.type === 'Debit' ? fmt(l.amount) : '—'}
-                          </td>
-                          <td style={{ ...s.td, textAlign: 'right', fontWeight: 600, color: l.runningBalance >= 0 ? '#374151' : C.red }}>
-                            {fmt(l.runningBalance)}
-                          </td>
-                        </tr>
-                      ))}
-                      <tr style={{ background: '#1e2a3b' }}>
-                        <td colSpan={5} style={{ ...s.td, color: '#7a9cc0', fontWeight: 700 }}>Closing Balance</td>
-                        <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: statement.closingBalance >= 0 ? '#34d399' : '#f87171' }}>
-                          {fmt(statement.closingBalance)}
+
+            {statement.lines.length === 0 ? (
+              <div style={{ color: isDark ? '#94a3b8' : '#6c757d', fontSize: 13, padding: '16px 0' }}>No transactions recorded in this period.</div>
+            ) : (
+              <div style={{ overflowX: 'auto', borderRadius: 8, border: `1px solid ${isDark ? '#334155' : '#dee2e6'}` }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th(isDark)}>Date</th>
+                      <th style={styles.th(isDark)}>Description</th>
+                      <th style={styles.th(isDark)}>Ref No</th>
+                      <th style={{ ...styles.th(isDark), textAlign: 'right' }}>Credit (In)</th>
+                      <th style={{ ...styles.th(isDark), textAlign: 'right' }}>Debit (Out)</th>
+                      <th style={{ ...styles.th(isDark), textAlign: 'right' }}>Running Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style={{ background: isDark ? '#141e33' : '#f8f9fa' }}>
+                      <td style={styles.td(isDark)} colSpan={5}>
+                        <span style={{ color: isDark ? '#94a3b8' : '#6c757d', fontSize: 12, fontWeight: 700 }}>Initial Opening Balance</span>
+                      </td>
+                      <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 700 }}>{fmt(statement.openingBalance)}</td>
+                    </tr>
+                    {statement.lines.map((l, i) => (
+                      <tr key={l.id} style={styles.tr(isDark, i)}>
+                        <td style={{ ...styles.td(isDark), whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDate(l.date)}</td>
+                        <td style={{ ...styles.td(isDark), maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.description}</td>
+                        <td style={{ ...styles.td(isDark), color: isDark ? '#64748b' : '#9ca3af', fontSize: 11 }}>{l.referenceNo || '—'}</td>
+                        <td style={{ ...styles.td(isDark), textAlign: 'right', color: l.type === 'Credit' ? BT.success : (isDark ? '#334155' : '#dee2e6'), fontWeight: l.type === 'Credit' ? 700 : 400 }}>
+                          {l.type === 'Credit' ? fmt(l.amount) : '—'}
+                        </td>
+                        <td style={{ ...styles.td(isDark), textAlign: 'right', color: l.type === 'Debit' ? BT.danger : (isDark ? '#334155' : '#dee2e6'), fontWeight: l.type === 'Debit' ? 700 : 400 }}>
+                          {l.type === 'Debit' ? fmt(l.amount) : '—'}
+                        </td>
+                        <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 700, color: l.runningBalance >= 0 ? (isDark ? '#f8fafc' : '#212529') : BT.danger }}>
+                          {fmt(l.runningBalance)}
                         </td>
                       </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )
-            }
+                    ))}
+                    <tr style={{ background: isDark ? '#1e293b' : '#212529' }}>
+                      <td colSpan={5} style={{ ...styles.td(isDark), color: '#94a3b8', fontWeight: 700 }}>CLOSING LEDGER BALANCE</td>
+                      <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 800, color: statement.closingBalance >= 0 ? '#34d399' : '#f87171' }}>
+                        {fmt(statement.closingBalance)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -1082,54 +1175,92 @@ function LedgerTab({ from, to }) {
   );
 }
 
-// ─── Expenses ─────────────────────────────────────────────────────────────────
-function ExpensesTab({ from, to }) {
+// ─── Expenses Tab ─────────────────────────────────────────────────────────────
+function ExpensesTab({ from, to, isDark }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setData(await getReportExpenses({ from, to })); }
-    catch { setData(null); }
+    try {
+      setData(await getReportExpenses({ from, to }));
+    } catch {
+      setData(null);
+    }
     setLoading(false);
   }, [from, to]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <Loader />;
-  if (!data)   return <Empty msg="Could not load expenses." />;
+  const gridColor = isDark ? '#334155' : '#e9ecef';
+  const textColor = isDark ? '#94a3b8' : '#6c757d';
+
+  if (loading) return <Loader isDark={isDark} />;
+  if (!data)   return <Empty msg="Could not load expense breakdown." isDark={isDark} />;
 
   const splitPie = [
     { name: 'Purchases', value: data.totalPurchases },
     { name: 'Wages',     value: data.totalWages     },
   ].filter(d => d.value > 0);
-  const splitColors = [C.amber, C.cyan];
+  const splitColors = [BT.orange, BT.purple];
   const matBar = (data.byMaterial || []).map((m, i) => ({ name: m.material, Amount: m.totalAmount, color: PIE_COLORS[i % PIE_COLORS.length] }));
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 14, marginBottom: 20, flexWrap: 'wrap' }}>
+      {/* ── KPI Row ── */}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
         {[
-          { label: 'Purchase Expenses', value: fmt(data.totalPurchases), color: C.amber, bg: '#fffbeb', icon: '📦' },
-          { label: 'Wages Paid',        value: fmt(data.totalWages),     color: C.cyan,  bg: '#ecfeff', icon: '👷' },
-          { label: 'Grand Total',       value: fmt(data.grandTotal),     color: C.red,   bg: '#fef2f2', icon: '💸' },
+          { label: 'Purchases & Supplies', value: fmt(data.totalPurchases), tag: 'MATERIAL', icon: '📦', gradient: 'linear-gradient(135deg, #fd7e14 0%, #d96309 100%)' },
+          { label: 'Wages Disbursed',      value: fmt(data.totalWages),     tag: 'PAYROLL',  icon: '👷', gradient: 'linear-gradient(135deg, #6f42c1 0%, #59359a 100%)' },
+          { label: 'Grand Total Expenses', value: fmt(data.grandTotal),     tag: 'OUTFLOW',  icon: '💸', gradient: 'linear-gradient(135deg, #dc3545 0%, #b02a37 100%)' },
         ].map(k => (
-          <div key={k.label} style={{ ...s.kpiCard, background: k.bg, borderLeft: `4px solid ${k.color}`, flex: 1, minWidth: 160 }}>
-            <div style={s.kpiIcon}>{k.icon}</div>
+          <div
+            key={k.label}
+            style={{
+              background: k.gradient,
+              borderRadius: 12,
+              padding: '16px 20px',
+              color: '#fff',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flex: '1 1 220px',
+            }}
+          >
             <div>
-              <div style={{ ...s.kpiVal, color: k.color }}>{k.value}</div>
-              <div style={s.kpiLabel}>{k.label}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', opacity: 0.85, marginBottom: 4 }}>
+                {k.tag}
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 800, lineHeight: 1 }}>
+                {k.value}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 500, opacity: 0.9, marginTop: 4 }}>
+                {k.label}
+              </div>
+            </div>
+            <div style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 22,
+            }}>
+              {k.icon}
             </div>
           </div>
         ))}
       </div>
 
-      <div style={s.twoCol}>
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Expense Split</div>
-          {splitPie.length === 0 ? <Empty msg="No expenses in this period." /> : (
+      <div style={styles.twoCol}>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Expense Distribution Ratio</div>
+          {splitPie.length === 0 ? <Empty msg="No expenses recorded in this period." isDark={isDark} /> : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-              <ResponsiveContainer width={200} height={200}>
+              <ResponsiveContainer width={190} height={190}>
                 <PieChart>
                   <Pie data={splitPie} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={4} dataKey="value">
                     {splitPie.map((_, i) => <Cell key={i} fill={splitColors[i]} />)}
@@ -1141,16 +1272,18 @@ function ExpensesTab({ from, to }) {
                 {splitPie.map((d, i) => (
                   <div key={d.name} style={{ marginBottom: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 13 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600, color: '#374151' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontWeight: 600, color: isDark ? '#cbd5e1' : '#374151' }}>
                         <span style={{ width: 10, height: 10, borderRadius: 3, background: splitColors[i], display: 'inline-block' }} />
                         {d.name}
                       </span>
-                      <span style={{ fontWeight: 700, color: splitColors[i] }}>{fmt(d.value)}</span>
+                      <span style={{ fontWeight: 800, color: splitColors[i] }}>{fmt(d.value)}</span>
                     </div>
-                    <div style={{ background: '#e5e7eb', borderRadius: 99, height: 8 }}>
+                    <div style={{ background: isDark ? '#334155' : '#e9ecef', borderRadius: 99, height: 8 }}>
                       <div style={{ width: `${pct(d.value, data.grandTotal)}%`, height: '100%', borderRadius: 99, background: splitColors[i] }} />
                     </div>
-                    <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{pct(d.value, data.grandTotal)}% of total</div>
+                    <div style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#6c757d', marginTop: 3 }}>
+                      {pct(d.value, data.grandTotal)}% of total expenses
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1158,14 +1291,14 @@ function ExpensesTab({ from, to }) {
           )}
         </div>
 
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Purchases by Material</div>
-          {matBar.length === 0 ? <Empty msg="No purchases in this period." /> : (
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Material Purchases Breakdown</div>
+          {matBar.length === 0 ? <Empty msg="No material purchases found." isDark={isDark} /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={matBar} layout="vertical" margin={{ top: 4, right: 16, left: 40, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                <XAxis type="number" tickFormatter={fmtK} tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} width={60} />
+              <BarChart data={matBar} layout="vertical" margin={{ top: 8, right: 16, left: 40, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} horizontal={false} />
+                <XAxis type="number" tickFormatter={fmtK} tick={{ fontSize: 10, fill: textColor }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: textColor }} axisLine={false} tickLine={false} width={64} />
                 <Tooltip content={<ChartTip />} />
                 <Bar dataKey="Amount" radius={[0, 4, 4, 0]}>
                   {matBar.map((m, i) => <Cell key={i} fill={m.color} />)}
@@ -1177,29 +1310,35 @@ function ExpensesTab({ from, to }) {
       </div>
 
       {data.wagePayments.length > 0 && (
-        <div style={s.panel}>
-          <div style={s.panelTitle}>Wage Payments</div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={s.table}>
+        <div style={styles.panelCard(isDark)}>
+          <div style={styles.panelTitle(isDark)}>Recent Wage Disbursals</div>
+          <div style={{ overflowX: 'auto', borderRadius: 8, border: `1px solid ${isDark ? '#334155' : '#dee2e6'}` }}>
+            <table style={styles.table}>
               <thead>
-                <tr>{['Worker', 'Period', 'Gross', 'Deductions', 'Net', 'Paid On'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+                <tr>
+                  {['Worker Name', 'Period', 'Gross', 'Deductions', 'Net Pay', 'Disbursed On'].map(h => (
+                    <th key={h} style={styles.th(isDark)}>{h}</th>
+                  ))}
+                </tr>
               </thead>
               <tbody>
                 {data.wagePayments.map((w, i) => (
-                  <tr key={w.id} style={i % 2 === 0 ? s.trEven : s.trOdd}>
-                    <td style={{ ...s.td, fontWeight: 600 }}>{w.workerName}</td>
-                    <td style={{ ...s.td, fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtShort(w.periodFrom)} – {fmtShort(w.periodTo)}</td>
-                    <td style={{ ...s.td, textAlign: 'right' }}>{fmt(w.grossAmount)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: w.deductions > 0 ? C.red : '#9ca3af' }}>
+                  <tr key={w.id} style={styles.tr(isDark, i)}>
+                    <td style={{ ...styles.td(isDark), fontWeight: 700 }}>{w.workerName}</td>
+                    <td style={{ ...styles.td(isDark), fontSize: 12, color: isDark ? '#94a3b8' : '#6c757d', whiteSpace: 'nowrap' }}>
+                      {fmtShort(w.periodFrom)} – {fmtShort(w.periodTo)}
+                    </td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right' }}>{fmt(w.grossAmount)}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', color: w.deductions > 0 ? BT.danger : (isDark ? '#64748b' : '#9ca3af') }}>
                       {w.deductions > 0 ? `-${fmt(w.deductions)}` : '—'}
                     </td>
-                    <td style={{ ...s.td, textAlign: 'right', fontWeight: 700, color: C.cyan }}>{fmt(w.netAmount)}</td>
-                    <td style={{ ...s.td, fontSize: 12, color: '#6b7280', whiteSpace: 'nowrap' }}>{fmtShort(w.paidAt)}</td>
+                    <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 800, color: BT.success }}>{fmt(w.netAmount)}</td>
+                    <td style={{ ...styles.td(isDark), fontSize: 12, color: isDark ? '#94a3b8' : '#6c757d', whiteSpace: 'nowrap' }}>{fmtShort(w.paidAt)}</td>
                   </tr>
                 ))}
-                <tr style={{ background: '#1e2a3b' }}>
-                  <td colSpan={4} style={{ ...s.td, color: '#7a9cc0', fontWeight: 700 }}>TOTAL</td>
-                  <td style={{ ...s.td, textAlign: 'right', color: '#67e8f9', fontWeight: 700 }}>{fmt(data.totalWages)}</td>
+                <tr style={{ background: isDark ? '#1e293b' : '#212529' }}>
+                  <td colSpan={4} style={{ ...styles.td(isDark), color: '#94a3b8', fontWeight: 700 }}>TOTAL WAGE DISBURSAL</td>
+                  <td style={{ ...styles.td(isDark), textAlign: 'right', color: '#34d399', fontWeight: 800 }}>{fmt(data.totalWages)}</td>
                   <td />
                 </tr>
               </tbody>
@@ -1212,51 +1351,275 @@ function ExpensesTab({ from, to }) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function Loader() {
-  return <div style={{ padding: '3rem', textAlign: 'center', color: '#9ca3af', fontSize: 14 }}>⏳ Loading report…</div>;
-}
-function Empty({ msg }) {
-  return <div style={{ padding: '2rem', textAlign: 'center', color: '#9ca3af', fontSize: 14 }}>{msg}</div>;
-}
-function Badge({ color, bg, children }) {
-  return <span style={{ background: bg, color, borderRadius: 20, padding: '2px 10px', fontSize: 12, fontWeight: 700 }}>{children}</span>;
+function Loader({ isDark }) {
+  return (
+    <div style={{ padding: '4rem 2rem', textAlign: 'center', color: isDark ? '#94a3b8' : '#6c757d', fontSize: 14 }}>
+      ⏳ Compiling analytical reports…
+    </div>
+  );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const s = {
-  page:        { fontFamily: "'Segoe UI', Arial, sans-serif", background: '#f1f5f9', minHeight: '100vh' },
-  header:      { background: 'linear-gradient(135deg,#1e2a3b 0%,#2d3f57 100%)', padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  headerLeft:  { display: 'flex', alignItems: 'center', gap: 14 },
-  headerIcon:  { fontSize: 30, background: 'rgba(255,255,255,0.1)', padding: 10, borderRadius: 12 },
-  headerSub:   { color: 'rgba(255,255,255,0.5)', fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 2 },
-  headerTitle: { color: '#fff', fontSize: '1.4rem', fontWeight: 700 },
-  // Period bar
-  periodBar:   { background: '#fff', borderBottom: '1px solid #e5e7eb', padding: '10px 2rem', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  presetGroup: { display: 'flex', gap: 6, flexWrap: 'wrap' },
-  presetBtn:   { padding: '5px 12px', borderRadius: 20, border: '1px solid #e5e7eb', background: '#f8fafc', color: '#6b7280', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all .15s' },
-  presetActive:{ background: '#1e2a3b', color: '#fff', borderColor: '#1e2a3b' },
-  customRange: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginLeft: 8, paddingLeft: 12, borderLeft: '2px solid #e5e7eb' },
-  dateInput:   { padding: '5px 9px', borderRadius: 7, border: '1px solid #d1d5db', fontSize: 13, outline: 'none', background: '#fff' },
-  applyBtn:    { background: C.green, color: '#fff', border: 'none', borderRadius: 7, padding: '5px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  // Tabs
-  tabBar:      { display: 'flex', background: '#fff', borderBottom: '2px solid #e5e7eb', padding: '0 2rem', overflowX: 'auto' },
-  tabBtn:      { padding: '11px 16px', border: 'none', background: 'none', fontSize: 13, fontWeight: 500, color: '#6b7280', cursor: 'pointer', whiteSpace: 'nowrap', borderBottom: '2px solid transparent', marginBottom: -2 },
-  tabActive:   { color: '#1e2a3b', fontWeight: 700, borderBottom: '2px solid #2E75B6' },
-  body:        { padding: '1.5rem 2rem' },
-  // Content
-  kpiGrid:     { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 20 },
-  kpiCard:     { borderRadius: 12, padding: '1rem 1.2rem', display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 2px 8px rgba(0,0,0,.06)' },
-  kpiIcon:     { fontSize: 22, flexShrink: 0 },
-  kpiVal:      { fontSize: '1.25rem', fontWeight: 800, lineHeight: 1 },
-  kpiLabel:    { fontSize: 11, color: '#6b7280', marginTop: 3, fontWeight: 500 },
-  twoCol:      { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 16, marginBottom: 16 },
-  panel:       { background: '#fff', borderRadius: 14, padding: '1.3rem 1.5rem', boxShadow: '0 2px 10px rgba(0,0,0,.06)', marginBottom: 16 },
-  panelTitle:  { fontSize: 14, fontWeight: 700, color: '#1e2a3b', marginBottom: 14 },
-  table:       { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-  th:          { background: '#f8fafc', color: '#374151', padding: '9px 11px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '2px solid #e5e7eb', whiteSpace: 'nowrap' },
-  trEven:      { background: '#fff' },
-  trOdd:       { background: '#f8fafc' },
-  td:          { padding: '9px 11px', borderBottom: '1px solid #f1f5f9', verticalAlign: 'middle' },
-  search:      { padding: '6px 11px', borderRadius: 7, border: '1px solid #e5e7eb', fontSize: 13, outline: 'none', minWidth: 180 },
-  acctSelect:  { padding: '7px 11px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 14, outline: 'none', minWidth: 260, background: '#fff' },
+function Empty({ msg, isDark }) {
+  return (
+    <div style={{ padding: '3rem 2rem', textAlign: 'center', color: isDark ? '#94a3b8' : '#6c757d', fontSize: 14 }}>
+      {msg}
+    </div>
+  );
+}
+
+function Badge({ color, bg, children }) {
+  return (
+    <span style={{ background: bg, color, borderRadius: 20, padding: '3px 10px', fontSize: 11, fontWeight: 700 }}>
+      {children}
+    </span>
+  );
+}
+
+// ─── Stylesheet ───────────────────────────────────────────────────────────────
+const styles = {
+  page: (isDark) => ({
+    minHeight: '100vh',
+    background: isDark ? 'var(--bg-page)' : '#f8f9fa',
+    paddingBottom: 40,
+    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  }),
+
+  header: (isDark) => ({
+    background: isDark
+      ? 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)'
+      : 'linear-gradient(135deg, #212529 0%, #0d6efd 100%)',
+    padding: '24px 32px',
+    borderBottom: `1px solid ${isDark ? '#334155' : '#e9ecef'}`,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+    boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+  }),
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+  },
+  headerIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    background: 'rgba(255, 255, 255, 0.15)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 24,
+    backdropFilter: 'blur(8px)',
+  },
+  headerBreadcrumb: {
+    fontSize: 11,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontWeight: 700,
+    marginBottom: 4,
+  },
+  headerTitle: () => ({
+    margin: 0,
+    fontSize: 24,
+    fontWeight: 800,
+    color: '#ffffff',
+    letterSpacing: -0.5,
+  }),
+  headerBadge: {
+    background: 'rgba(255, 255, 255, 0.2)',
+    backdropFilter: 'blur(8px)',
+    color: '#ffffff',
+    padding: '6px 14px',
+    borderRadius: 20,
+    fontSize: 12,
+    fontWeight: 700,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  headerSubBadge: () => ({
+    background: 'rgba(255, 255, 255, 0.12)',
+    color: '#ffffff',
+    padding: '6px 14px',
+    borderRadius: 20,
+    fontSize: 12,
+    fontWeight: 600,
+  }),
+
+  content: {
+    maxWidth: 1440,
+    margin: '0 auto',
+    padding: '24px 28px',
+  },
+
+  periodBar: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 12,
+    border: `1px solid ${isDark ? '#334155' : '#dee2e6'}`,
+    padding: '12px 20px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 16,
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+  }),
+
+  presetBtn: (active, isDark) => ({
+    padding: '6px 14px',
+    borderRadius: 20,
+    border: `1px solid ${active ? BT.primary : (isDark ? '#334155' : '#dee2e6')}`,
+    background: active ? BT.primary : (isDark ? '#1e293b' : '#f8f9fa'),
+    color: active ? '#ffffff' : (isDark ? '#cbd5e1' : '#495057'),
+    fontSize: 12,
+    fontWeight: active ? 700 : 600,
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+  }),
+
+  customRange: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    paddingLeft: 12,
+    borderLeft: `2px solid ${isDark ? '#334155' : '#e9ecef'}`,
+  }),
+
+  dateInput: (isDark) => ({
+    padding: '6px 10px',
+    borderRadius: 8,
+    border: `1px solid ${isDark ? '#334155' : '#ced4da'}`,
+    background: isDark ? '#1e293b' : '#ffffff',
+    color: isDark ? '#f8fafc' : '#212529',
+    fontSize: 12,
+    outline: 'none',
+  }),
+
+  applyBtn: {
+    background: BT.success,
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '6px 14px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+
+  tabNav: (isDark) => ({
+    display: 'flex',
+    gap: 6,
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 12,
+    border: `1px solid ${isDark ? '#334155' : '#dee2e6'}`,
+    padding: '8px 12px',
+    overflowX: 'auto',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+  }),
+
+  navBtn: (isActive, isDark) => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 18px',
+    border: 'none',
+    borderRadius: 8,
+    background: isActive ? BT.primary : 'transparent',
+    color: isActive ? '#ffffff' : (isDark ? '#94a3b8' : '#6c757d'),
+    fontWeight: isActive ? 700 : 600,
+    fontSize: 13,
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+    whiteSpace: 'nowrap',
+  }),
+
+  kpiGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+    gap: 16,
+    marginBottom: 20,
+  },
+
+  twoCol: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+    gap: 16,
+    marginBottom: 20,
+  },
+
+  panelCard: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 12,
+    border: `1px solid ${isDark ? '#334155' : '#dee2e6'}`,
+    padding: '20px 24px',
+    boxShadow: '0 4px 14px rgba(0,0,0,0.04)',
+    marginBottom: 20,
+  }),
+
+  panelTitle: (isDark) => ({
+    fontSize: 14,
+    fontWeight: 700,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: isDark ? '#f8fafc' : '#212529',
+    marginBottom: 16,
+  }),
+
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    textAlign: 'left',
+  },
+
+  th: (isDark) => ({
+    padding: '11px 14px',
+    background: isDark ? '#1e293b' : '#f8f9fa',
+    color: isDark ? '#cbd5e1' : '#495057',
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    borderBottom: `2px solid ${isDark ? '#334155' : '#dee2e6'}`,
+    whiteSpace: 'nowrap',
+  }),
+
+  tr: (isDark, i) => ({
+    backgroundColor: i % 2 === 0 ? (isDark ? '#0f172a' : '#ffffff') : (isDark ? '#141e33' : '#fafafa'),
+    borderBottom: `1px solid ${isDark ? '#1e293b' : '#edf2f7'}`,
+    transition: 'background-color 0.15s ease',
+  }),
+
+  td: (isDark) => ({
+    padding: '11px 14px',
+    fontSize: 13,
+    color: isDark ? '#f8fafc' : '#212529',
+    verticalAlign: 'middle',
+  }),
+
+  searchBox: (isDark) => ({
+    padding: '8px 14px',
+    borderRadius: 8,
+    border: `1px solid ${isDark ? '#334155' : '#ced4da'}`,
+    background: isDark ? '#1e293b' : '#ffffff',
+    color: isDark ? '#f8fafc' : '#212529',
+    fontSize: 13,
+    outline: 'none',
+    minWidth: 220,
+  }),
+
+  acctSelect: (isDark) => ({
+    padding: '8px 14px',
+    borderRadius: 8,
+    border: `1px solid ${isDark ? '#334155' : '#ced4da'}`,
+    background: isDark ? '#1e293b' : '#ffffff',
+    color: isDark ? '#f8fafc' : '#212529',
+    fontSize: 13,
+    outline: 'none',
+    minWidth: 260,
+  }),
 };

@@ -7,9 +7,6 @@ import { getWorkers } from '../services/api';
 // ---- Generic worker page (used for any worker via /worker/:id) ----
 const GENERIC_COLS = [
   { key: 'lotNumber',     label: 'Lot Number' },
-  { key: 'size',          label: 'Size' },
-  { key: 'color',         label: 'Color' },
-  { key: 'machine',       label: 'Machine' },
   { key: 'front',         label: 'Front' },
   { key: 'bazo',          label: 'Bazo' },
   { key: 'tape',          label: 'Tape' },
@@ -45,7 +42,7 @@ export function GenericWorker() {
   );
 }
 
-// ---- Faizan ----
+// ---- Faizan (Machine Operator) ----
 const FAIZAN_COLS = [
   { key: 'machine',       label: 'Machine Name' },
   { key: 'size',          label: 'Size' },
@@ -67,9 +64,7 @@ export function Faizan() {
 
 // ---- Gujjar Press ----
 const GUJJAR_COLS = [
-  { key: 'size',          label: 'Size' },
   { key: 'lotNumber',     label: 'Lot Number' },
-  { key: 'color',         label: 'Color' },
   { key: 'front',         label: 'Front' },
   { key: 'bazo',          label: 'Bazo' },
   { key: 'tape',          label: 'Tape' },
@@ -86,9 +81,7 @@ export function GujjarPress() {
 
 // ---- Arslan ----
 const ARSLAN_COLS = [
-  { key: 'size',          label: 'Size' },
   { key: 'lotNumber',     label: 'Lot Number' },
-  { key: 'color',         label: 'Color' },
   { key: 'pocket',        label: 'Pocket' },
   { key: 'gala',          label: 'Gala' },
   { key: 'lable',         label: 'Lable' },
@@ -114,7 +107,6 @@ export function Nazir() {
 
 // ---- Umer Safty ----
 const SAFTY_COLS = [
-  { key: 'size',          label: 'Size' },
   { key: 'lotNumber',     label: 'Lot Number' },
   { key: 'quantity',      label: 'Quantity' },
   { key: 'completed',     label: 'Completed' },
@@ -138,9 +130,7 @@ export function NaveedRafo() {
 
 // ---- Bhatti Kaj ----
 const BHATTI_COLS = [
-  { key: 'size',          label: 'Size' },
   { key: 'lotNumber',     label: 'Lot Number' },
-  { key: 'color',         label: 'Color' },
   { key: 'quantity',      label: 'Quantity' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },

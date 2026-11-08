@@ -60,6 +60,7 @@ public class LotDto
     public string? Material { get; set; }
     public string Status { get; set; } = "Stitching";
     public string? PicturePath { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 public class LotCreateDto
@@ -68,6 +69,7 @@ public class LotCreateDto
     public int? SizeId { get; set; }
     public string? Material { get; set; }
     public string? Status { get; set; }
+    public bool? IsActive { get; set; }
 }
 
 public class LotStatusUpdateDto
@@ -79,6 +81,7 @@ public class DropdownDto
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
 }
 
 public class LoginRequestDto
@@ -152,6 +155,7 @@ public class WageCalculationResultDto
 {
     public int WorkerId { get; set; }
     public string WorkerName { get; set; } = string.Empty;
+    public string? WorkerPhone { get; set; }
     public DateTime PeriodFrom { get; set; }
     public DateTime PeriodTo { get; set; }
     public decimal GrossAmount { get; set; }
@@ -171,6 +175,7 @@ public class WagePaymentDto
     public int Id { get; set; }
     public int WorkerId { get; set; }
     public string WorkerName { get; set; } = string.Empty;
+    public string? WorkerPhone { get; set; }
     public decimal GrossAmount { get; set; }
     public decimal Deductions { get; set; }
     public decimal NetAmount { get; set; }
@@ -209,6 +214,7 @@ public class WorkerAdvanceDto
     public int Id { get; set; }
     public int WorkerId { get; set; }
     public string WorkerName { get; set; } = string.Empty;
+    public string? WorkerPhone { get; set; }
     public decimal Amount { get; set; }
     public string? Notes { get; set; }
     public DateTime AdvanceDate { get; set; }

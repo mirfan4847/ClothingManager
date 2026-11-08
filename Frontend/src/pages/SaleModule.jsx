@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import {
   getSales, createSale, updateSale, deleteSale,
   addSalePayment, deleteSalePayment, getActiveCustomers, getLots, getAccounts,
 } from '../services/api';
+import LotHistoryModal from '../components/LotHistoryModal';
 
 const PAYMENT_METHODS = ['Cash', 'Bank Transfer', 'Cheque', 'Online'];
-const STATUS_COLORS   = {
-  Pending: { bg: '#fef9c3', color: '#854d0e', border: '#fde047' },
-  Partial: { bg: '#fff7ed', color: '#9a3412', border: '#fdba74' },
-  Paid:    { bg: '#dcfce7', color: '#14532d', border: '#86efac' },
+const STATUS_COLORS = {
+  Pending: { bg: '#fff3cd', color: '#664d03', border: '#ffecb5', badge: '#ffc107' },
+  Partial: { bg: '#ffe5d0', color: '#9a3412', border: '#fed1a6', badge: '#fd7e14' },
+  Paid:    { bg: '#d1e7dd', color: '#0f5132', border: '#badbcc', badge: '#198754' },
 };
 
 const today    = () => new Date().toISOString().split('T')[0];
@@ -19,9 +21,23 @@ const fmtMoney = n  => `Rs ${Number(n ?? 0).toLocaleString('en-PK', { minimumFra
 const emptySaleForm    = () => ({ lotId: '', customerId: '', saleDate: today(), totalPieces: '', ratePerPiece: '', discount: '0', notes: '' });
 const emptyPaymentForm = () => ({ amount: '', paymentDate: today(), paymentMethod: 'Cash', referenceNo: '', notes: '', accountId: '' });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Bootstrap 5 Palette ──
+const BT = {
+  primary:   '#0d6efd',
+  secondary: '#6c757d',
+  success:   '#198754',
+  danger:    '#dc3545',
+  warning:   '#ffc107',
+  info:      '#0dcaf0',
+  dark:      '#212529',
+  purple:    '#6f42c1',
+  orange:    '#fd7e14',
+};
+
 export default function SaleModule() {
   const { can } = useAuth();
+  const { isDark, currentColor } = useTheme();
+
   const [sales,       setSales]       = useState([]);
   const [customers,   setCustomers]   = useState([]);
   const [lots,        setLots]        = useState([]);
@@ -43,7 +59,7 @@ export default function SaleModule() {
   const [saleError,    setSaleError]    = useState('');
 
   // Payment modal (view + add)
-  const [paymentSale,    setPaymentSale]    = useState(null); // full sale obj
+  const [paymentSale,    setPaymentSale]    = useState(null);
   const [showPayModal,   setShowPayModal]   = useState(false);
   const [payForm,        setPayForm]        = useState(emptyPaymentForm());
   const [paySaving,      setPaySaving]      = useState(false);
@@ -57,6 +73,7 @@ export default function SaleModule() {
   const [delSale,   setDelSale]   = useState(null);
   const [delSaving, setDelSaving] = useState(false);
   const [delError,  setDelError]  = useState('');
+  const [selectedLot, setSelectedLot] = useState(null);
 
   const openDelSale = (sale) => {
     setDelSale(sale);
@@ -68,7 +85,6 @@ export default function SaleModule() {
     setLoading(true);
     try {
       const params = {};
-      if (statusFilter && statusFilter !== 'Outstanding') params.status = statusFilter;
       if (custFilter)   params.customerId = custFilter;
       if (dateFrom)     params.from       = new Date(dateFrom).toISOString();
       if (dateTo)       params.to         = new Date(dateTo + 'T23:59:59').toISOString();
@@ -83,13 +99,17 @@ export default function SaleModule() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, custFilter, dateFrom, dateTo]);
+  }, [custFilter, dateFrom, dateTo]);
 
   useEffect(() => { load(); }, [load]);
 
   const displayed = useMemo(() => {
     let result = sales;
-    if (statusFilter === 'Outstanding') result = result.filter(s => (s.balanceDue || 0) > 0);
+    if (statusFilter === 'Outstanding') {
+      result = result.filter(s => (s.balanceDue || 0) > 0);
+    } else if (statusFilter) {
+      result = result.filter(s => (s.status || '').toLowerCase() === statusFilter.toLowerCase());
+    }
     if (!search) return result;
     const q = search.toLowerCase();
     return result.filter(s =>
@@ -99,16 +119,16 @@ export default function SaleModule() {
     );
   }, [sales, search, statusFilter]);
 
-  // Stats always reflect what's currently visible (filtered + searched)
+  // Executive summary metrics always reflect all orders in the current customer / date scope
   const summary = useMemo(() => ({
-    totalSales:   displayed.length,
-    totalRevenue: displayed.reduce((a, s) => a + (s.netAmount  || 0), 0),
-    totalPaid:    displayed.reduce((a, s) => a + (s.totalPaid  || 0), 0),
-    totalBalance: displayed.reduce((a, s) => a + (s.balanceDue || 0), 0),
-    pendingCount: displayed.filter(s => s.status === 'Pending').length,
-    partialCount: displayed.filter(s => s.status === 'Partial').length,
-    paidCount:    displayed.filter(s => s.status === 'Paid').length,
-  }), [displayed]);
+    totalSales:   sales.length,
+    totalRevenue: sales.reduce((a, s) => a + (s.netAmount  || 0), 0),
+    totalPaid:    sales.reduce((a, s) => a + (s.totalPaid  || 0), 0),
+    totalBalance: sales.reduce((a, s) => a + (s.balanceDue || 0), 0),
+    pendingCount: sales.filter(s => s.status === 'Pending').length,
+    partialCount: sales.filter(s => s.status === 'Partial').length,
+    paidCount:    sales.filter(s => s.status === 'Paid').length,
+  }), [sales]);
 
   const hasFilters = statusFilter || custFilter || dateFrom || dateTo || search;
 
@@ -140,7 +160,7 @@ export default function SaleModule() {
     setShowSaleForm(true);
   };
 
-  const totalAmount  = useMemo(() => {
+  const totalAmount = useMemo(() => {
     const p = Number(saleForm.totalPieces) || 0;
     const r = Number(saleForm.ratePerPiece) || 0;
     return p * r;
@@ -151,10 +171,10 @@ export default function SaleModule() {
   }, [totalAmount, saleForm.discount]);
 
   const handleSaveSale = async () => {
-    if (!saleForm.lotId)         { setSaleError('Please select a lot.'); return; }
-    if (!saleForm.customerId)    { setSaleError('Please select a customer.'); return; }
-    if (!saleForm.totalPieces)   { setSaleError('Total pieces is required.'); return; }
-    if (!saleForm.ratePerPiece)  { setSaleError('Rate per piece is required.'); return; }
+    if (!saleForm.lotId)        { setSaleError('Please select a lot.'); return; }
+    if (!saleForm.customerId)   { setSaleError('Please select a customer.'); return; }
+    if (!saleForm.totalPieces)  { setSaleError('Total pieces is required.'); return; }
+    if (!saleForm.ratePerPiece) { setSaleError('Rate per piece is required.'); return; }
     setSaleSaving(true); setSaleError('');
     try {
       const payload = {
@@ -256,503 +276,901 @@ export default function SaleModule() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={s.page}>
-      {/* Header */}
-      <div style={s.header}>
-        <div style={s.headerLeft}>
-          <div style={s.headerIcon}>🧾</div>
+    <div style={styles.page(isDark)} className="hide-scrollbar">
+
+      {/* ── Executive Header Banner (Bootstrap 5 Style) ── */}
+      <div style={styles.header(isDark)}>
+        <div style={styles.headerLeft}>
+          <div style={styles.headerIconWrap}>
+            <span>🧾</span>
+          </div>
           <div>
-            <div style={s.headerSub}>Revenue</div>
-            <div style={s.headerTitle}>Sales Orders</div>
+            <div style={styles.headerBreadcrumb}>REVENUE MANAGEMENT</div>
+            <h1 style={styles.headerTitle(isDark)}>Sales Orders &amp; Invoicing</h1>
           </div>
         </div>
-        <button onClick={openAddSale} style={s.addBtn}>+ New Sale</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={styles.headerBadge}>
+            Live Revenue Tracker
+          </span>
+          <span style={styles.headerSubBadge(isDark)}>
+            {sales.length} Total Orders
+          </span>
+          <button onClick={openAddSale} style={styles.addBtn}>
+            <span>+</span> New Sale Order
+          </button>
+        </div>
       </div>
 
-      {/* Summary — always reflects current filter + search */}
-      <div style={s.statsRow}>
-        {[
-          { label: 'Total Sales',  val: summary.totalSales,             color: '#2E75B6', status: '' },
-          { label: 'Revenue',      val: fmtMoney(summary.totalRevenue), color: '#059669', status: '' },
-          { label: 'Collected',    val: fmtMoney(summary.totalPaid),    color: '#7c3aed', status: 'Paid' },
-          { label: 'Outstanding',  val: fmtMoney(summary.totalBalance), color: '#dc2626', status: 'Outstanding' },
-          { label: 'Pending',      val: summary.pendingCount,           color: '#854d0e', status: 'Pending' },
-          { label: 'Partial',      val: summary.partialCount,           color: '#9a3412', status: 'Partial' },
-          { label: 'Paid',         val: summary.paidCount,              color: '#14532d', status: 'Paid' },
-        ].map(({ label, val, color, status: st }) => {
-          const isClickable = st !== null;
-          const isActive    = isClickable && statusFilter === st;
-          return (
-            <div key={label}
-              onClick={isClickable ? () => setStatusFilter(st) : undefined}
-              style={{
-                ...s.statCard,
-                cursor:    isClickable ? 'pointer' : 'default',
-                border:    isActive    ? `2px solid ${color}` : '2px solid transparent',
-                background: isActive   ? `${color}12` : '#fff',
-                transform: isActive    ? 'translateY(-2px)' : 'none',
-                boxShadow: isActive    ? `0 4px 12px ${color}30` : '0 1px 6px rgba(0,0,0,.07)',
-                transition: 'all .15s',
-              }}>
-              <div style={{ ...s.statVal, color }}>{val}</div>
-              <div style={{ ...s.statLabel, color: isActive ? color : '#888' }}>
-                {label}{isClickable && !isActive && st !== '' ? ' ↑' : ''}
-              </div>
+      <div style={styles.content}>
+
+        {/* ── 5 Executive KPI Cards with Bootstrap Colors ── */}
+        <div style={styles.kpiGrid}>
+          <BtKpiCard
+            label="Total Sales"
+            tag="DISPATCH ORDERS"
+            value={summary.totalSales}
+            gradient="linear-gradient(135deg, #0a58ca 0%, #0d6efd 100%)"
+            glow="rgba(13, 110, 253, 0.35)"
+            icon="📦"
+            sub={`${summary.paidCount} Fully Paid · ${summary.partialCount} Partial`}
+            onClick={() => setStatusFilter('')}
+            active={statusFilter === ''}
+          />
+          <BtKpiCard
+            label="Net Revenue"
+            tag="GROSS BILLING"
+            value={fmtMoney(summary.totalRevenue)}
+            gradient="linear-gradient(135deg, #146c43 0%, #198754 100%)"
+            glow="rgba(25, 135, 84, 0.35)"
+            icon="💵"
+            sub="After applied order discounts"
+            onClick={() => setStatusFilter('')}
+            active={false}
+          />
+          <BtKpiCard
+            label="Collected"
+            tag="PAYMENTS RECEIVED"
+            value={fmtMoney(summary.totalPaid)}
+            gradient="linear-gradient(135deg, #59359a 0%, #6f42c1 100%)"
+            glow="rgba(111, 66, 193, 0.35)"
+            icon="✅"
+            sub="Cash & bank account deposits"
+            onClick={() => setStatusFilter(prev => prev === 'Paid' ? '' : 'Paid')}
+            active={statusFilter === 'Paid'}
+          />
+          <BtKpiCard
+            label="Outstanding"
+            tag="PENDING RECEIVABLES"
+            value={fmtMoney(summary.totalBalance)}
+            gradient="linear-gradient(135deg, #b02a37 0%, #dc3545 100%)"
+            glow="rgba(220, 53, 69, 0.35)"
+            icon="⏳"
+            sub={`${summary.pendingCount + summary.partialCount} orders with balance`}
+            onClick={() => setStatusFilter(prev => prev === 'Outstanding' ? '' : 'Outstanding')}
+            active={statusFilter === 'Outstanding'}
+          />
+          <BtKpiCard
+            label="Pending Invoices"
+            tag="AWAITING PAYMENT"
+            value={summary.pendingCount}
+            gradient="linear-gradient(135deg, #c2410c 0%, #fd7e14 100%)"
+            glow="rgba(253, 126, 20, 0.35)"
+            icon="⚠️"
+            sub="Zero payment received yet"
+            onClick={() => setStatusFilter(prev => prev === 'Pending' ? '' : 'Pending')}
+            active={statusFilter === 'Pending'}
+          />
+        </div>
+
+        {/* ── Filter & Search Toolbar (Bootstrap 5 Style) ── */}
+        <div style={styles.filterToolbar(isDark)}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', flex: 1 }}>
+            {/* Search */}
+            <div style={{ position: 'relative', minWidth: 200, flex: '1 1 200px' }}>
+              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.5, fontSize: 13 }}>🔍</span>
+              <input
+                style={{ ...styles.input(isDark), paddingLeft: 34 }}
+                placeholder="Search lot, customer, notes…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
             </div>
-          );
-        })}
-        {hasFilters && (
-          <div style={{ ...s.statCard, border: '1px dashed #f59e0b', background: '#fffbeb', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-            <div style={{ fontSize: 11, color: '#92400e', fontWeight: 700, textAlign: 'center' }}>Filtered</div>
-            <button
-              style={{ marginTop: 4, fontSize: 11, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, padding: 0 }}
-              onClick={() => { setStatusFilter(''); setCustFilter(''); setDateFrom(''); setDateTo(''); setSearch(''); }}>
-              ✕ Clear
-            </button>
+
+            {/* Customer Dropdown */}
+            <select
+              style={{ ...styles.select(isDark), minWidth: 170 }}
+              value={custFilter}
+              onChange={e => setCustFilter(e.target.value)}
+            >
+              <option value="">All Customers ({customers.length})</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+
+            {/* Dates */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#6c757d', fontWeight: 600 }}>From:</span>
+              <input
+                style={{ ...styles.input(isDark), width: 135 }}
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#6c757d', fontWeight: 600 }}>To:</span>
+              <input
+                style={{ ...styles.input(isDark), width: 135 }}
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+              />
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Filters */}
-      <div style={s.filterRow}>
-        <input
-          style={s.searchBox} placeholder="Search lot, customer…"
-          value={search} onChange={e => setSearch(e.target.value)}
-        />
-        <select style={s.filterSelect} value={custFilter} onChange={e => { setCustFilter(e.target.value); }}>
-          <option value="">All Customers</option>
-          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <input style={s.dateInput} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" />
-        <input style={s.dateInput} type="date" value={dateTo}   onChange={e => setDateTo(e.target.value)}   title="To date" />
-        <div style={s.pills}>
-          {[['', 'All'], ['Pending', 'Pending'], ['Partial', 'Partial'], ['Paid', 'Paid']].map(([k, l]) => (
-            <button key={k} onClick={() => setStatusFilter(k)}
-              style={{ ...s.pill, ...(statusFilter === k ? s.pillActive : {}) }}>
-              {l}
-              {k && sales.filter(sale => sale.status === k).length > 0 && (
-                <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.8 }}>
-                  ({sales.filter(sale => sale.status === k).length})
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-        <div style={s.viewToggle}>
-          {[['table','☰'],['cards','⊞']].map(([k, ic]) => (
-            <button key={k} onClick={() => setView(k)}
-              style={{ ...s.viewBtn, ...(view === k ? s.viewBtnActive : {}) }}
-              title={k === 'table' ? 'Table view' : 'Card view'}>
-              {ic}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Table / Cards */}
-      {loading ? (
-        <div style={s.loading}>Loading sales…</div>
-      ) : view === 'table' ? (
-        <div style={s.tableWrap}>
-          <table style={s.table}>
-            <thead>
-              <tr style={s.thead}>
-                {['Date','Lot','Size','Customer','Pieces','Rate','Total','Discount','Net','Paid','Balance','Status',''].map(h => (
-                  <th key={h} style={s.th}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paginated.map(sale => {
-                const st = STATUS_COLORS[sale.status] || STATUS_COLORS.Pending;
-                return (
-                  <tr key={sale.id} style={s.tr}>
-                    <td style={s.td}>{fmtDate(sale.saleDate)}</td>
-                    <td style={{ ...s.td, fontWeight: 700 }}>{sale.lotNumber}</td>
-                    <td style={s.td}>{sale.sizeName || '—'}</td>
-                    <td style={s.td}>{sale.customerName}</td>
-                    <td style={{ ...s.td, textAlign: 'right' }}>{sale.totalPieces.toLocaleString()}</td>
-                    <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(sale.ratePerPiece)}</td>
-                    <td style={{ ...s.td, textAlign: 'right' }}>{fmtMoney(sale.totalAmount)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: '#dc2626' }}>
-                      {sale.discount > 0 ? `-${fmtMoney(sale.discount)}` : '—'}
-                    </td>
-                    <td style={{ ...s.td, textAlign: 'right', fontWeight: 700 }}>{fmtMoney(sale.netAmount)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: '#059669' }}>{fmtMoney(sale.totalPaid)}</td>
-                    <td style={{ ...s.td, textAlign: 'right', color: sale.balanceDue > 0 ? '#dc2626' : '#888' }}>
-                      {fmtMoney(sale.balanceDue)}
-                    </td>
-                    <td style={s.td}>
-                      <span style={{ ...s.statusBadge, background: st.bg, color: st.color, border: `1px solid ${st.border}` }}>
-                        {sale.status}
-                      </span>
-                    </td>
-                    <td style={s.td}>
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'nowrap' }}>
-                        <button onClick={() => openPayModal(sale)} style={s.payBtn}>💳 Pay</button>
-                        <button onClick={() => openEditSale(sale)} style={s.editBtn}>Edit</button>
-                        <button onClick={() => openDelSale(sale)}  style={s.delBtn}>Del</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {displayed.length === 0 && (
-                <tr><td colSpan={13} style={{ ...s.td, textAlign: 'center', color: '#aaa', padding: 40 }}>
-                  No sales found.
-                </td></tr>
-              )}
-            </tbody>
-          </table>
-          <SalePagination page={page} pageSize={pageSize} total={displayed.length} onPage={setPage} onPageSize={setPageSize} />
-        </div>
-      ) : (
-        // ── Card View ──
-        displayed.length === 0 ? (
-          <div style={s.loading}>No sales found.</div>
-        ) : (
-          <>
-          <div style={s.saleCardGrid}>
-            {paginated.map(sale => {
-              const sc = STATUS_COLORS[sale.status] || STATUS_COLORS.Pending;
+          {/* Status Pills */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {[
+              ['', 'All Orders', sales.length],
+              ['Pending', 'Pending', summary.pendingCount],
+              ['Partial', 'Partial', summary.partialCount],
+              ['Paid', 'Paid', summary.paidCount],
+              ['Outstanding', 'Unpaid Only', summary.pendingCount + summary.partialCount],
+            ].map(([k, l, count]) => {
+              const active = statusFilter === k;
               return (
-                <div key={sale.id} style={s.saleCard}>
-                  {/* Card header */}
-                  <div style={s.saleCardHead}>
-                    <div>
-                      <div style={s.saleCardLot}>{sale.lotNumber}</div>
-                      {sale.sizeName && <div style={s.saleCardSize}>{sale.sizeName}</div>}
-                    </div>
-                    <span style={{ ...s.statusBadge, background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}>
-                      {sale.status}
-                    </span>
-                  </div>
-
-                  {/* Customer & date */}
-                  <div style={s.saleCardCustomer}>🤝 {sale.customerName}</div>
-                  <div style={s.saleCardDate}>{fmtDate(sale.saleDate)}</div>
-
-                  {/* Amounts */}
-                  <div style={s.saleCardAmounts}>
-                    <div style={s.saleCardAmtItem}>
-                      <div style={s.saleCardAmtLabel}>Net</div>
-                      <div style={s.saleCardAmtVal}>{fmtMoney(sale.netAmount)}</div>
-                    </div>
-                    <div style={s.saleCardAmtItem}>
-                      <div style={s.saleCardAmtLabel}>Paid</div>
-                      <div style={{ ...s.saleCardAmtVal, color: '#059669' }}>{fmtMoney(sale.totalPaid)}</div>
-                    </div>
-                    <div style={s.saleCardAmtItem}>
-                      <div style={s.saleCardAmtLabel}>Balance</div>
-                      <div style={{ ...s.saleCardAmtVal, color: sale.balanceDue > 0 ? '#dc2626' : '#888' }}>
-                        {fmtMoney(sale.balanceDue)}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div style={{ background: '#e5e7eb', borderRadius: 999, height: 5, overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', borderRadius: 999,
-                      width: sale.netAmount > 0 ? `${Math.min(100, (sale.totalPaid / sale.netAmount) * 100)}%` : '0%',
-                      background: sc.color,
-                    }} />
-                  </div>
-
-                  {/* Meta */}
-                  <div style={{ fontSize: 12, color: '#888' }}>
-                    {sale.totalPieces.toLocaleString()} pcs @ {fmtMoney(sale.ratePerPiece)}
-                    {sale.discount > 0 && <span style={{ color: '#dc2626' }}> · -{fmtMoney(sale.discount)}</span>}
-                  </div>
-
-                  {/* Actions */}
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                    <button onClick={() => openPayModal(sale)} style={{ ...s.payBtn, flex: 1 }}>💳 Pay</button>
-                    <button onClick={() => openEditSale(sale)} style={s.editBtn}>Edit</button>
-                    <button onClick={() => openDelSale(sale)}  style={s.delBtn}>Del</button>
-                  </div>
-                </div>
+                <button
+                  key={k}
+                  onClick={() => setStatusFilter(prev => (prev === k && k !== '' ? '' : k))}
+                  style={styles.statusPill(active, k, isDark)}
+                >
+                  <span>{l}</span>
+                  <span style={{
+                    marginLeft: 6,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: '1px 6px',
+                    borderRadius: 10,
+                    background: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'),
+                    color: active ? '#ffffff' : (isDark ? '#e2e8f0' : '#495057'),
+                  }}>
+                    {count}
+                  </span>
+                </button>
               );
             })}
-          </div>
-          <SalePagination page={page} pageSize={pageSize} total={displayed.length} onPage={setPage} onPageSize={setPageSize} />
-          </>
-        )
-      )}
 
-      {/* ── Sale Form Modal ── */}
-      {showSaleForm && (
-        <div style={s.overlay} onClick={() => setShowSaleForm(false)}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
-            <div style={s.modalTitle}>{editingSale ? 'Edit Sale' : 'New Sale'}</div>
+            {hasFilters && (
+              <button
+                onClick={() => { setStatusFilter(''); setCustFilter(''); setDateFrom(''); setDateTo(''); setSearch(''); }}
+                style={styles.clearBtn}
+                title="Reset all filters"
+              >
+                ✕ Clear
+              </button>
+            )}
 
-            <div style={s.formGrid}>
-              <div>
-                <label style={s.label}>Lot *</label>
-                <select style={s.input} value={saleForm.lotId}
-                  onChange={e => setSaleForm(f => ({ ...f, lotId: e.target.value }))}>
-                  <option value="">— Select Lot —</option>
-                  {lots.map(l => (
-                    <option key={l.id} value={l.id}>
-                      {l.lotNumber}{l.sizeName ? ` (${l.sizeName})` : ''}{l.material ? ` — ${l.material}` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={s.label}>Customer *</label>
-                <select style={s.input} value={saleForm.customerId}
-                  onChange={e => setSaleForm(f => ({ ...f, customerId: e.target.value }))}>
-                  <option value="">— Select Customer —</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.phone ? ` — ${c.phone}` : ''}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={s.label}>Sale Date *</label>
-                <input style={s.input} type="date" value={saleForm.saleDate}
-                  onChange={e => setSaleForm(f => ({ ...f, saleDate: e.target.value }))} />
-              </div>
-              <div>
-                <label style={s.label}>Total Pieces *</label>
-                <input style={s.input} type="number" min="1" value={saleForm.totalPieces}
-                  onChange={e => setSaleForm(f => ({ ...f, totalPieces: e.target.value }))} />
-              </div>
-              <div>
-                <label style={s.label}>Rate / Piece *</label>
-                <input style={s.input} type="number" min="0" step="0.01" value={saleForm.ratePerPiece}
-                  onChange={e => setSaleForm(f => ({ ...f, ratePerPiece: e.target.value }))} />
-              </div>
-              <div>
-                <label style={s.label}>Discount</label>
-                <input style={s.input} type="number" min="0" step="0.01" value={saleForm.discount}
-                  onChange={e => setSaleForm(f => ({ ...f, discount: e.target.value }))} />
-              </div>
-            </div>
-
-            {/* Calculated totals */}
-            <div style={s.calcRow}>
-              <div style={s.calcItem}>
-                <div style={s.calcLabel}>Total Amount</div>
-                <div style={s.calcVal}>{fmtMoney(totalAmount)}</div>
-              </div>
-              <div style={s.calcItem}>
-                <div style={s.calcLabel}>Discount</div>
-                <div style={{ ...s.calcVal, color: '#dc2626' }}>- {fmtMoney(Number(saleForm.discount) || 0)}</div>
-              </div>
-              <div style={{ ...s.calcItem, background: '#eff6ff', borderRadius: 8, padding: '8px 16px' }}>
-                <div style={s.calcLabel}>Net Amount</div>
-                <div style={{ ...s.calcVal, color: '#2E75B6', fontSize: '1.2rem' }}>{fmtMoney(netAmount)}</div>
-              </div>
-            </div>
-
-            <div>
-              <label style={s.label}>Notes</label>
-              <textarea style={{ ...s.input, minHeight: 60, resize: 'vertical' }} value={saleForm.notes}
-                onChange={e => setSaleForm(f => ({ ...f, notes: e.target.value }))}
-                placeholder="Any remarks…" />
-            </div>
-
-            {saleError && <div style={s.errMsg}>{saleError}</div>}
-            <div style={s.modalActions}>
-              <button onClick={() => setShowSaleForm(false)} style={s.cancelBtn}>Cancel</button>
-              <button onClick={handleSaveSale} style={s.saveBtn} disabled={saleSaving}>
-                {saleSaving ? 'Saving…' : editingSale ? 'Update' : 'Create Sale'}
+            {/* View Switcher */}
+            <div style={styles.viewToggle(isDark)}>
+              <button
+                onClick={() => setView('table')}
+                style={styles.viewBtn(view === 'table', isDark)}
+                title="Table View"
+              >
+                ☰
+              </button>
+              <button
+                onClick={() => setView('cards')}
+                style={styles.viewBtn(view === 'cards', isDark)}
+                title="Card View"
+              >
+                ⊞
               </button>
             </div>
           </div>
         </div>
-      )}
 
-      {/* ── Payment Modal ── */}
-      {showPayModal && paymentSale && (
-        <div style={s.overlay} onClick={() => setShowPayModal(false)}>
-          <div style={{ ...s.modal, maxWidth: 580 }} onClick={e => e.stopPropagation()}>
-            {/* Sale header */}
-            <div style={s.payHeader}>
-              <div>
-                <div style={s.modalTitle}>Payment — {paymentSale.customerName}</div>
-                <div style={{ fontSize: 13, color: '#555' }}>
-                  Lot: <strong>{paymentSale.lotNumber}</strong>
-                  {paymentSale.sizeName && ` (${paymentSale.sizeName})`}
-                  &nbsp;·&nbsp;{paymentSale.totalPieces.toLocaleString()} pcs @ {fmtMoney(paymentSale.ratePerPiece)}
+        {/* ── Table / Cards Container ── */}
+        {loading ? (
+          <div style={styles.loadingBox(isDark)}>
+            <div style={styles.spinner} />
+            <div style={{ marginTop: 14, fontWeight: 600 }}>Loading sales orders…</div>
+          </div>
+        ) : view === 'table' ? (
+          <div style={styles.cardBox(isDark)}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    {['Date', 'Lot Number', 'Size', 'Customer', 'Pieces', 'Rate', 'Total', 'Discount', 'Net Amount', 'Paid', 'Balance Due', 'Status', 'Actions'].map(h => (
+                      <th key={h} style={styles.th(isDark, ['Pieces', 'Rate', 'Total', 'Discount', 'Net Amount', 'Paid', 'Balance Due'].includes(h))}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginated.length === 0 ? (
+                    <tr>
+                      <td colSpan={13} style={styles.empty(isDark)}>
+                        <div style={{ padding: '28px 0', textAlign: 'center' }}>
+                          <div style={{ fontSize: 32, marginBottom: 8 }}>
+                            {statusFilter === 'Paid' ? '💳' : '🔍'}
+                          </div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: isDark ? '#ffffff' : '#212529' }}>
+                            {statusFilter === 'Paid'
+                              ? 'No fully paid sales orders yet'
+                              : 'No sales orders match your selected filters'}
+                          </div>
+                          <div style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#6c757d', marginTop: 4 }}>
+                            {statusFilter === 'Paid'
+                              ? 'All current orders are Pending or Partial. Record a payment to see orders here.'
+                              : 'Try adjusting your search query or reset active filters.'}
+                          </div>
+                          {hasFilters && (
+                            <button
+                              onClick={() => { setStatusFilter(''); setCustFilter(''); setDateFrom(''); setDateTo(''); setSearch(''); }}
+                              style={{
+                                marginTop: 14,
+                                padding: '6px 16px',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                borderRadius: 8,
+                                border: 'none',
+                                background: '#0d6efd',
+                                color: '#ffffff',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Show All Orders ({sales.length})
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    paginated.map((sale, i) => {
+                      const st = STATUS_COLORS[sale.status] || STATUS_COLORS.Pending;
+                      return (
+                        <tr key={sale.id} style={styles.tr(isDark, i % 2 === 0)}>
+                          <td style={styles.td(isDark)}>{fmtDate(sale.saleDate)}</td>
+                          <td style={styles.td(isDark)}>
+                            <span
+                              style={{ ...styles.lotBadge, cursor: 'pointer' }}
+                              onClick={() => setSelectedLot({ id: sale.lotId, lotNumber: sale.lotNumber, sizeName: sale.sizeName })}
+                              title="Click to see which staff worked on this lot"
+                            >
+                              {sale.lotNumber}
+                            </span>
+                          </td>
+                          <td style={styles.td(isDark)}>
+                            <span style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#6c757d' }}>{sale.sizeName || '—'}</span>
+                          </td>
+                          <td style={styles.td(isDark)}>
+                            <strong style={{ color: isDark ? '#ffffff' : '#212529' }}>{sale.customerName}</strong>
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 600 }}>
+                            {sale.totalPieces.toLocaleString()}
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right' }}>
+                            {fmtMoney(sale.ratePerPiece)}
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right' }}>
+                            {fmtMoney(sale.totalAmount)}
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.danger, fontWeight: sale.discount > 0 ? 700 : 400 }}>
+                            {sale.discount > 0 ? `-${fmtMoney(sale.discount)}` : '—'}
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right', fontWeight: 800, color: isDark ? '#fff' : BT.primary, fontSize: 14 }}>
+                            {fmtMoney(sale.netAmount)}
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right', color: BT.success, fontWeight: 700 }}>
+                            {fmtMoney(sale.totalPaid)}
+                          </td>
+                          <td style={{ ...styles.td(isDark), textAlign: 'right', color: sale.balanceDue > 0 ? BT.danger : '#6c757d', fontWeight: sale.balanceDue > 0 ? 800 : 500 }}>
+                            {fmtMoney(sale.balanceDue)}
+                          </td>
+                          <td style={styles.td(isDark)}>
+                            <span style={styles.statusBadge(sale.status)}>
+                              {sale.status}
+                            </span>
+                          </td>
+                          <td style={styles.td(isDark)}>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
+                              <button onClick={() => openPayModal(sale)} style={styles.btnPaySm}>💳 Pay</button>
+                              <button onClick={() => openEditSale(sale)} style={styles.btnEditSm}>✏️ Edit</button>
+                              <button onClick={() => openDelSale(sale)}  style={styles.btnDelSm}>🗑️ Del</button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <SalePagination
+              page={page}
+              pageSize={pageSize}
+              total={displayed.length}
+              onPage={setPage}
+              onPageSize={setPageSize}
+              isDark={isDark}
+            />
+          </div>
+        ) : (
+          /* ── Card View ── */
+          <div>
+            {displayed.length === 0 ? (
+              <div style={styles.emptyCardBox(isDark)}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>
+                  {statusFilter === 'Paid' ? '💳' : '🔍'}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: isDark ? '#ffffff' : '#212529' }}>
+                  {statusFilter === 'Paid'
+                    ? 'No fully paid sales orders yet'
+                    : 'No sales orders match your selected filters'}
+                </div>
+                <div style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#6c757d', marginTop: 4 }}>
+                  {statusFilter === 'Paid'
+                    ? 'All current orders are Pending or Partial. Record a payment to see orders here.'
+                    : 'Try adjusting your search query or reset active filters.'}
+                </div>
+                {hasFilters && (
+                  <button
+                    onClick={() => { setStatusFilter(''); setCustFilter(''); setDateFrom(''); setDateTo(''); setSearch(''); }}
+                    style={{
+                      marginTop: 14,
+                      padding: '6px 16px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      borderRadius: 8,
+                      border: 'none',
+                      background: '#0d6efd',
+                      color: '#ffffff',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Show All Orders ({sales.length})
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div style={styles.cardGrid}>
+                  {paginated.map(sale => {
+                    const sc = STATUS_COLORS[sale.status] || STATUS_COLORS.Pending;
+                    const pctPaid = sale.netAmount > 0 ? Math.min(100, (sale.totalPaid / sale.netAmount) * 100) : 0;
+                    return (
+                      <div key={sale.id} style={styles.orderCard(isDark)}>
+                        <div style={styles.orderCardHead}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span
+                                style={{ ...styles.lotBadge, cursor: 'pointer' }}
+                                onClick={() => setSelectedLot({ id: sale.lotId, lotNumber: sale.lotNumber, sizeName: sale.sizeName })}
+                                title="Click to see which staff worked on this lot"
+                              >
+                                {sale.lotNumber}
+                              </span>
+                              {sale.sizeName && <span style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#6c757d' }}>({sale.sizeName})</span>}
+                            </div>
+                            <div style={styles.orderCustomer(isDark)}>🤝 {sale.customerName}</div>
+                          </div>
+                          <span style={styles.statusBadge(sale.status)}>
+                            {sale.status}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: 11, color: isDark ? 'var(--text-muted)' : '#6c757d', marginTop: 4 }}>
+                          📅 {fmtDate(sale.saleDate)} · {sale.totalPieces.toLocaleString()} pcs @ {fmtMoney(sale.ratePerPiece)}
+                        </div>
+
+                        {/* Amounts Grid */}
+                        <div style={styles.orderAmountsBox(isDark)}>
+                          <div style={{ textAlign: 'center', flex: 1 }}>
+                            <div style={styles.amtLabel(isDark)}>Net Total</div>
+                            <div style={{ ...styles.amtVal(isDark), color: BT.primary }}>{fmtMoney(sale.netAmount)}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', flex: 1 }}>
+                            <div style={styles.amtLabel(isDark)}>Paid</div>
+                            <div style={{ ...styles.amtVal(isDark), color: BT.success }}>{fmtMoney(sale.totalPaid)}</div>
+                          </div>
+                          <div style={{ textAlign: 'center', flex: 1 }}>
+                            <div style={styles.amtLabel(isDark)}>Balance</div>
+                            <div style={{ ...styles.amtVal(isDark), color: sale.balanceDue > 0 ? BT.danger : '#6c757d' }}>{fmtMoney(sale.balanceDue)}</div>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div style={styles.progressBarBg(isDark)}>
+                          <div style={{ ...styles.progressBarFill, width: `${pctPaid}%`, background: sc.badge }} />
+                        </div>
+
+                        {/* Action buttons */}
+                        <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                          <button onClick={() => openPayModal(sale)} style={{ ...styles.btnPaySm, flex: 1, padding: '7px' }}>
+                            💳 Pay ({Math.round(pctPaid)}%)
+                          </button>
+                          <button onClick={() => openEditSale(sale)} style={{ ...styles.btnEditSm, padding: '7px 12px' }}>
+                            Edit
+                          </button>
+                          <button onClick={() => openDelSale(sale)}  style={{ ...styles.btnDelSm, padding: '7px 12px' }}>
+                            Del
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <SalePagination
+                    page={page}
+                    pageSize={pageSize}
+                    total={displayed.length}
+                    onPage={setPage}
+                    onPageSize={setPageSize}
+                    isDark={isDark}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+      </div>
+
+      {/* ── Sale Form Modal (Bootstrap Styled) ── */}
+      {showSaleForm && (
+        <div style={styles.overlay} onClick={() => setShowSaleForm(false)}>
+          <div style={styles.modal(isDark)} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader(isDark)}>
+              <span style={{ fontSize: 16, fontWeight: 800 }}>
+                {editingSale ? '✏️ Edit Sales Order' : '🧾 New Sales Order'}
+              </span>
+              <button onClick={() => setShowSaleForm(false)} style={styles.closeBtn}>✕</button>
+            </div>
+
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={styles.formGrid}>
+                <div>
+                  <label style={styles.label(isDark)}>Production Lot *</label>
+                  <select
+                    style={styles.select(isDark)}
+                    value={saleForm.lotId}
+                    onChange={e => setSaleForm(f => ({ ...f, lotId: e.target.value }))}
+                  >
+                    <option value="">— Select Lot —</option>
+                    {lots.map(l => (
+                      <option key={l.id} value={l.id}>
+                        {l.lotNumber}{l.sizeName ? ` (${l.sizeName})` : ''}{l.material ? ` — ${l.material}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={styles.label(isDark)}>Customer *</label>
+                  <select
+                    style={styles.select(isDark)}
+                    value={saleForm.customerId}
+                    onChange={e => setSaleForm(f => ({ ...f, customerId: e.target.value }))}
+                  >
+                    <option value="">— Select Customer —</option>
+                    {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.phone ? ` — ${c.phone}` : ''}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={styles.label(isDark)}>Sale Date *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    type="date"
+                    value={saleForm.saleDate}
+                    onChange={e => setSaleForm(f => ({ ...f, saleDate: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label style={styles.label(isDark)}>Total Pieces *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    type="number"
+                    min="1"
+                    placeholder="e.g. 1000"
+                    value={saleForm.totalPieces}
+                    onChange={e => setSaleForm(f => ({ ...f, totalPieces: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label style={styles.label(isDark)}>Rate / Piece (PKR) *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="e.g. 250"
+                    value={saleForm.ratePerPiece}
+                    onChange={e => setSaleForm(f => ({ ...f, ratePerPiece: e.target.value }))}
+                  />
+                </div>
+
+                <div>
+                  <label style={styles.label(isDark)}>Discount (PKR)</label>
+                  <input
+                    style={styles.input(isDark)}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0"
+                    value={saleForm.discount}
+                    onChange={e => setSaleForm(f => ({ ...f, discount: e.target.value }))}
+                  />
                 </div>
               </div>
-              <span style={{ ...s.statusBadge, ...STATUS_COLORS[paymentSale.status], border: `1px solid ${STATUS_COLORS[paymentSale.status]?.border}` }}>
+
+              {/* Calculated totals preview */}
+              <div style={styles.calcPreviewBox(isDark)}>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={styles.calcLabel(isDark)}>Gross Amount</div>
+                  <div style={styles.calcVal(isDark)}>{fmtMoney(totalAmount)}</div>
+                </div>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={styles.calcLabel(isDark)}>Discount</div>
+                  <div style={{ ...styles.calcVal(isDark), color: BT.danger }}>- {fmtMoney(Number(saleForm.discount) || 0)}</div>
+                </div>
+                <div style={{ textAlign: 'center', flex: 1, background: isDark ? 'rgba(13,110,253,0.15)' : '#e7f1ff', borderRadius: 8, padding: '8px' }}>
+                  <div style={{ ...styles.calcLabel(isDark), color: BT.primary, fontWeight: 700 }}>Net Payable</div>
+                  <div style={{ ...styles.calcVal(isDark), color: BT.primary, fontSize: 16 }}>{fmtMoney(netAmount)}</div>
+                </div>
+              </div>
+
+              <div>
+                <label style={styles.label(isDark)}>Remarks / Notes</label>
+                <textarea
+                  style={{ ...styles.input(isDark), minHeight: 65, resize: 'vertical' }}
+                  value={saleForm.notes}
+                  onChange={e => setSaleForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="Payment terms, delivery details, vehicle number…"
+                />
+              </div>
+
+              {saleError && <div style={styles.errorAlert}>⚠️ {saleError}</div>}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+                <button onClick={() => setShowSaleForm(false)} style={styles.btnSecondary}>
+                  Cancel
+                </button>
+                <button onClick={handleSaveSale} style={styles.btnPrimary} disabled={saleSaving}>
+                  {saleSaving ? 'Saving…' : editingSale ? 'Update Order' : 'Create Sales Order'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Payment Modal (Bootstrap Styled) ── */}
+      {showPayModal && paymentSale && (
+        <div style={styles.overlay} onClick={() => setShowPayModal(false)}>
+          <div style={{ ...styles.modal(isDark), maxWidth: 620 }} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader(isDark)}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800 }}>
+                  💳 Payment Management
+                </div>
+                <div style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#6c757d', marginTop: 2 }}>
+                  Customer: <strong>{paymentSale.customerName}</strong> · Lot: <strong>{paymentSale.lotNumber}</strong>
+                </div>
+              </div>
+              <span style={styles.statusBadge(paymentSale.status)}>
                 {paymentSale.status}
               </span>
             </div>
 
-            {/* Totals row */}
-            <div style={s.payTotals}>
-              {[
-                { label: 'Net Amount', val: fmtMoney(paymentSale.netAmount),  color: '#1e2a3b' },
-                { label: 'Paid',       val: fmtMoney(paymentSale.totalPaid),  color: '#059669' },
-                { label: 'Balance',    val: fmtMoney(paymentSale.balanceDue), color: paymentSale.balanceDue > 0 ? '#dc2626' : '#888' },
-              ].map(({ label, val, color }) => (
-                <div key={label} style={s.payTotalItem}>
-                  <div style={{ fontSize: 11, color: '#888' }}>{label}</div>
-                  <div style={{ fontWeight: 700, color, fontSize: '1rem' }}>{val}</div>
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Totals Summary */}
+              <div style={styles.calcPreviewBox(isDark)}>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={styles.calcLabel(isDark)}>Net Order Amount</div>
+                  <div style={styles.calcVal(isDark)}>{fmtMoney(paymentSale.netAmount)}</div>
                 </div>
-              ))}
-            </div>
-
-            {/* Payment history */}
-            <div style={s.payHistoryLabel}>Payment History ({paymentSale.payments?.length || 0})</div>
-            {paymentSale.payments?.length > 0 ? (
-              <div style={s.payList}>
-                {paymentSale.payments.map(p => (
-                  <div key={p.id} style={s.payRow}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{fmtMoney(p.amount)}</div>
-                      <div style={{ fontSize: 12, color: '#888' }}>
-                        {fmtDate(p.paymentDate)} · {p.paymentMethod}
-                        {p.referenceNo && ` · Ref: ${p.referenceNo}`}
-                      </div>
-                      {p.notes && <div style={{ fontSize: 12, color: '#aaa', fontStyle: 'italic' }}>{p.notes}</div>}
-                    </div>
-                    <button onClick={() => handleDeletePayment(p.id)} style={s.delBtn}>Del</button>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={styles.calcLabel(isDark)}>Total Collected</div>
+                  <div style={{ ...styles.calcVal(isDark), color: BT.success }}>{fmtMoney(paymentSale.totalPaid)}</div>
+                </div>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={styles.calcLabel(isDark)}>Balance Due</div>
+                  <div style={{ ...styles.calcVal(isDark), color: paymentSale.balanceDue > 0 ? BT.danger : BT.success }}>
+                    {fmtMoney(paymentSale.balanceDue)}
                   </div>
-                ))}
+                </div>
               </div>
-            ) : (
-              <div style={{ color: '#aaa', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>No payments yet.</div>
-            )}
 
-            {/* Add payment */}
-            {paymentSale.balanceDue > 0 && (
-              <>
-                {!showPayForm ? (
-                  <button onClick={() => setShowPayForm(true)} style={{ ...s.saveBtn, width: '100%', textAlign: 'center' }}>
-                    + Record Payment
-                  </button>
-                ) : (
-                  <div style={s.addPayForm}>
-                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: '#1e2a3b' }}>Record Payment</div>
-                    <div style={s.formGrid}>
-                      <div>
-                        <label style={s.label}>Amount * (max {fmtMoney(balance)})</label>
-                        <input style={s.input} type="number" min="1" max={balance} value={payForm.amount}
-                          onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label style={s.label}>Payment Date *</label>
-                        <input style={s.input} type="date" value={payForm.paymentDate}
-                          onChange={e => setPayForm(f => ({ ...f, paymentDate: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label style={s.label}>Method</label>
-                        <select style={s.input} value={payForm.paymentMethod}
-                          onChange={e => setPayForm(f => ({ ...f, paymentMethod: e.target.value }))}>
-                          {PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={s.label}>Reference No</label>
-                        <input style={s.input} type="text" value={payForm.referenceNo}
-                          placeholder="Cheque / TRX no."
-                          onChange={e => setPayForm(f => ({ ...f, referenceNo: e.target.value }))} />
-                      </div>
-                    </div>
-                    <div>
-                      <label style={s.label}>Notes</label>
-                      <input style={s.input} type="text" value={payForm.notes}
-                        onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} />
-                    </div>
-                    <div style={{ background: '#f0f7ff', borderRadius: 8, padding: '10px 12px', border: '1px solid #bfdbfe' }}>
-                      <label style={{ ...s.label, color: '#1d4ed8', fontWeight: 700 }}>📊 Record in Finance Account</label>
-                      <select style={{ ...s.input, marginTop: 4 }} value={payForm.accountId}
-                        onChange={e => setPayForm(f => ({ ...f, accountId: e.target.value }))}>
-                        <option value="">— Don't record in Finance —</option>
-                        {finAccounts.map(a => (
-                          <option key={a.id} value={a.id}>{a.name} ({a.categoryName})</option>
-                        ))}
-                      </select>
-                      {payForm.accountId && (
-                        <div style={{ fontSize: 11, color: '#1d4ed8', marginTop: 4 }}>
-                          ✓ A Credit transaction will be created in Finance automatically
+              {/* Payment History List */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: isDark ? 'var(--text-muted)' : '#6c757d', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                  Recorded Payments ({paymentSale.payments?.length || 0})
+                </div>
+
+                {paymentSale.payments?.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 180, overflowY: 'auto' }}>
+                    {paymentSale.payments.map(p => (
+                      <div key={p.id} style={styles.payRow(isDark)}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 800, fontSize: 14, color: BT.success }}>
+                            {fmtMoney(p.amount)}
+                          </div>
+                          <div style={{ fontSize: 11, color: isDark ? 'var(--text-muted)' : '#6c757d', marginTop: 2 }}>
+                            📅 {fmtDate(p.paymentDate)} · <strong>{p.paymentMethod}</strong>
+                            {p.referenceNo && ` · Ref: ${p.referenceNo}`}
+                          </div>
+                          {p.notes && <div style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#888', fontStyle: 'italic', marginTop: 1 }}>{p.notes}</div>}
                         </div>
-                      )}
-                    </div>
-                    {payError && <div style={s.errMsg}>{payError}</div>}
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-                      <button onClick={() => setShowPayForm(false)} style={s.cancelBtn}>Cancel</button>
-                      <button onClick={handleAddPayment} style={s.saveBtn} disabled={paySaving}>
-                        {paySaving ? 'Saving…' : 'Save Payment'}
-                      </button>
-                    </div>
+                        <button onClick={() => handleDeletePayment(p.id)} style={styles.btnDelSm}>
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '16px 0', color: isDark ? 'var(--text-muted)' : '#888', fontSize: 13 }}>
+                    No payments have been received for this order yet.
                   </div>
                 )}
-              </>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-              <button onClick={() => setShowPayModal(false)} style={s.cancelBtn}>Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Delete Sale Confirm ── */}
-      {delSale && (
-        <div style={s.overlay} onClick={() => !delSaving && setDelSale(null)}>
-          <div style={{ ...s.modal, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
-            <div style={s.modalTitle}>Delete Sale?</div>
-            <p style={{ color: '#555', fontSize: 14, margin: '4px 0 8px' }}>
-              Delete sale of lot <strong>{delSale.lotNumber}</strong> to{' '}
-              <strong>{delSale.customerName}</strong> ({fmtMoney(delSale.netAmount)})?
-            </p>
-
-            {delSale.payments?.length > 0 && (
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#991b1b' }}>
-                <div style={{ fontWeight: 700, marginBottom: 2 }}>⚠️ Recorded Payments Warning</div>
-                This sale has <strong>{delSale.payments.length}</strong> payment(s) totaling <strong>{fmtMoney(delSale.totalPaid)}</strong>.
-                Deleting this sale will also remove all its recorded payments.
               </div>
-            )}
 
-            {delError && <div style={s.errMsg}>{delError}</div>}
-
-            <div style={{ ...s.modalActions, marginTop: 10, flexWrap: 'wrap' }}>
-              <button onClick={() => setDelSale(null)} style={s.cancelBtn} disabled={delSaving}>
-                Cancel
-              </button>
-              {delSale.payments?.length > 0 ? (
+              {/* Add Payment Form */}
+              {paymentSale.balanceDue > 0 && (
                 <>
-                  <button
-                    onClick={() => {
-                      const sToPay = delSale;
-                      setDelSale(null);
-                      openPayModal(sToPay);
-                    }}
-                    style={s.payBtn}
-                    disabled={delSaving}>
-                    💳 View Payments
-                  </button>
-                  <button
-                    onClick={() => handleDeleteSale(true)}
-                    style={{ ...s.saveBtn, background: '#dc2626' }}
-                    disabled={delSaving}>
-                    {delSaving ? 'Deleting…' : 'Delete Sale & Payments'}
-                  </button>
+                  {!showPayForm ? (
+                    <button onClick={() => setShowPayForm(true)} style={styles.btnSuccessWide}>
+                      + Record New Payment
+                    </button>
+                  ) : (
+                    <div style={styles.addPayBox(isDark)}>
+                      <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8, color: isDark ? '#ffffff' : '#212529' }}>
+                        Record Payment Transaction
+                      </div>
+                      <div style={styles.formGrid}>
+                        <div>
+                          <label style={styles.label(isDark)}>Amount * (max {fmtMoney(balance)})</label>
+                          <input
+                            style={styles.input(isDark)}
+                            type="number"
+                            min="1"
+                            max={balance}
+                            placeholder={`Up to ${balance}`}
+                            value={payForm.amount}
+                            onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label style={styles.label(isDark)}>Payment Date *</label>
+                          <input
+                            style={styles.input(isDark)}
+                            type="date"
+                            value={payForm.paymentDate}
+                            onChange={e => setPayForm(f => ({ ...f, paymentDate: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label style={styles.label(isDark)}>Payment Method</label>
+                          <select
+                            style={styles.select(isDark)}
+                            value={payForm.paymentMethod}
+                            onChange={e => setPayForm(f => ({ ...f, paymentMethod: e.target.value }))}
+                          >
+                            {PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={styles.label(isDark)}>Reference / Cheque No.</label>
+                          <input
+                            style={styles.input(isDark)}
+                            type="text"
+                            placeholder="e.g. TRX-90412"
+                            value={payForm.referenceNo}
+                            onChange={e => setPayForm(f => ({ ...f, referenceNo: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={styles.label(isDark)}>Notes</label>
+                        <input
+                          style={styles.input(isDark)}
+                          type="text"
+                          placeholder="Optional deposit remark…"
+                          value={payForm.notes}
+                          onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))}
+                        />
+                      </div>
+
+                      {/* Finance account sync */}
+                      <div style={styles.financeSyncBox(isDark)}>
+                        <label style={{ ...styles.label(isDark), color: BT.primary, fontWeight: 700 }}>
+                          📊 Financial Ledger Deposit Account
+                        </label>
+                        <select
+                          style={{ ...styles.select(isDark), marginTop: 4 }}
+                          value={payForm.accountId}
+                          onChange={e => setPayForm(f => ({ ...f, accountId: e.target.value }))}
+                        >
+                          <option value="">— Don't record in Finance —</option>
+                          {finAccounts.map(a => (
+                            <option key={a.id} value={a.id}>{a.name} ({a.categoryName})</option>
+                          ))}
+                        </select>
+                        {payForm.accountId && (
+                          <div style={{ fontSize: 11, color: BT.primary, marginTop: 4, fontWeight: 600 }}>
+                            ✓ A Credit transaction will be created in Finance under this account
+                          </div>
+                        )}
+                      </div>
+
+                      {payError && <div style={styles.errorAlert}>⚠️ {payError}</div>}
+
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 6 }}>
+                        <button onClick={() => setShowPayForm(false)} style={styles.btnSecondary}>
+                          Cancel
+                        </button>
+                        <button onClick={handleAddPayment} style={styles.btnSuccess} disabled={paySaving}>
+                          {paySaving ? 'Saving…' : '✓ Confirm & Save Payment'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
-              ) : (
-                <button
-                  onClick={() => handleDeleteSale(false)}
-                  style={{ ...s.saveBtn, background: '#dc2626' }}
-                  disabled={delSaving}>
-                  {delSaving ? 'Deleting…' : 'Delete'}
-                </button>
               )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                <button onClick={() => setShowPayModal(false)} style={styles.btnSecondary}>
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── Delete Sale Confirmation Modal ── */}
+      {delSale && (
+        <div style={styles.overlay} onClick={() => !delSaving && setDelSale(null)}>
+          <div style={{ ...styles.modal(isDark), maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader(isDark)}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: BT.danger }}>
+                ⚠️ Delete Sales Order?
+              </span>
+              <button onClick={() => setDelSale(null)} style={styles.closeBtn}>✕</button>
+            </div>
+
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <p style={{ color: isDark ? 'var(--text-main)' : '#212529', fontSize: 14, margin: 0, lineHeight: 1.5 }}>
+                Are you sure you want to delete the sale order for lot <strong>{delSale.lotNumber}</strong> to{' '}
+                <strong>{delSale.customerName}</strong> ({fmtMoney(delSale.netAmount)})?
+              </p>
+
+              {delSale.payments?.length > 0 && (
+                <div style={styles.warningBox}>
+                  <div style={{ fontWeight: 800, marginBottom: 2 }}>⚠️ Recorded Payments Warning</div>
+                  This sale has <strong>{delSale.payments.length}</strong> payment(s) totaling <strong>{fmtMoney(delSale.totalPaid)}</strong>.
+                  Deleting this sale will also remove all its recorded payment history.
+                </div>
+              )}
+
+              {delError && <div style={styles.errorAlert}>⚠️ {delError}</div>}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+                <button onClick={() => setDelSale(null)} style={styles.btnSecondary} disabled={delSaving}>
+                  Cancel
+                </button>
+                {delSale.payments?.length > 0 ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        const sToPay = delSale;
+                        setDelSale(null);
+                        openPayModal(sToPay);
+                      }}
+                      style={styles.btnPaySm}
+                      disabled={delSaving}>
+                      💳 View Payments
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSale(true)}
+                      style={styles.btnDanger}
+                      disabled={delSaving}>
+                      {delSaving ? 'Deleting…' : 'Delete Sale & Payments'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => handleDeleteSale(false)}
+                    style={styles.btnDanger}
+                    disabled={delSaving}>
+                    {delSaving ? 'Deleting…' : 'Delete Sale Order'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedLot && (
+        <LotHistoryModal
+          lot={selectedLot}
+          onClose={() => setSelectedLot(null)}
+        />
+      )}
+
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-function SalePagination({ page, pageSize, total, onPage, onPageSize }) {
+// ── Reusable KPI Card (Bootstrap 5 Style) ──
+function BtKpiCard({ label, tag, value, gradient, glow, icon, sub, onClick, active }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        background: gradient,
+        borderRadius: 14,
+        padding: '16px 18px',
+        color: '#ffffff',
+        boxShadow: active ? `0 0 0 3px #ffffff, 0 12px 28px ${glow}` : `0 8px 24px ${glow}`,
+        cursor: onClick ? 'pointer' : 'default',
+        transform: active ? 'scale(1.02)' : 'none',
+        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        minHeight: 110,
+        position: 'relative',
+        overflow: 'hidden',
+        outline: active ? '2px solid rgba(255,255,255,0.85)' : 'none',
+      }}
+      onMouseEnter={e => { if (onClick && !active) e.currentTarget.style.transform = 'translateY(-2px)'; }}
+      onMouseLeave={e => { if (onClick && !active) e.currentTarget.style.transform = 'none'; }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <span style={{
+          fontSize: 10,
+          fontWeight: 800,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          background: 'rgba(255, 255, 255, 0.22)',
+          padding: '2px 8px',
+          borderRadius: 6,
+          backdropFilter: 'blur(4px)',
+        }}>
+          {tag}
+        </span>
+        <span style={{ fontSize: 20, opacity: 0.9 }}>{icon}</span>
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>
+          {value}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255, 255, 255, 0.92)', marginTop: 2 }}>
+          {label}
+        </div>
+        {sub && (
+          <div style={{ fontSize: 10, color: 'rgba(255, 255, 255, 0.75)', marginTop: 3 }}>
+            {sub}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Pagination Component ──
+function SalePagination({ page, pageSize, total, onPage, onPageSize, isDark }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const pages = [];
   if (totalPages <= 7) {
@@ -769,113 +1187,651 @@ function SalePagination({ page, pageSize, total, onPage, onPageSize }) {
   const to   = Math.min(page*pageSize, total);
 
   return (
-    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px', borderTop:'2px solid #f0f2f5', background:'#fafbfc', flexWrap:'wrap', gap:10 }}>
-      <div style={{ display:'flex', alignItems:'center', gap:10, fontSize:13, color:'#6b7280' }}>
-        <span style={{ fontWeight:600 }}>Rows per page:</span>
-        <select value={pageSize} onChange={e => { onPageSize(Number(e.target.value)); onPage(1); }}
-          style={{ border:'1.5px solid #e5e7eb', borderRadius:7, padding:'5px 10px', fontSize:13, background:'#fff', cursor:'pointer', outline:'none' }}>
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '12px 18px', borderTop: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+      background: isDark ? 'var(--bg-subtle)' : '#f8f9fa', flexWrap: 'wrap', gap: 10
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: isDark ? 'var(--text-muted)' : '#6c757d' }}>
+        <span style={{ fontWeight: 600 }}>Rows:</span>
+        <select
+          value={pageSize}
+          onChange={e => { onPageSize(Number(e.target.value)); onPage(1); }}
+          style={{
+            border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+            borderRadius: 6, padding: '4px 8px', fontSize: 12,
+            background: isDark ? 'var(--bg-card)' : '#fff', color: isDark ? 'var(--text-main)' : '#212529',
+            cursor: 'pointer', outline: 'none'
+          }}
+        >
           {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
         </select>
-        <span style={{ color:'#9ca3af' }}>Showing <b style={{ color:'#374151' }}>{from}–{to}</b> of <b style={{ color:'#374151' }}>{total}</b></span>
+        <span>Showing <strong style={{ color: isDark ? '#fff' : '#212529' }}>{from}–{to}</strong> of <strong style={{ color: isDark ? '#fff' : '#212529' }}>{total}</strong></span>
       </div>
-      <div style={{ display:'flex', gap:4, alignItems:'center' }}>
-        <SalePageBtn disabled={page <= 1} onClick={() => onPage(page-1)}>‹ Prev</SalePageBtn>
+
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <button
+          onClick={() => onPage(page-1)}
+          disabled={page <= 1}
+          style={styles.pageBtn(false, page <= 1, isDark)}
+        >
+          ‹ Prev
+        </button>
         {pages.map((p, i) =>
-          p === '…'
-            ? <span key={`e${i}`} style={{ padding:'4px 4px', color:'#9ca3af', fontSize:14 }}>…</span>
-            : <SalePageBtn key={p} active={p === page} onClick={() => onPage(p)}>{p}</SalePageBtn>
+          p === '…' ? (
+            <span key={`e${i}`} style={{ padding: '4px 6px', color: '#9ca3af', fontSize: 12 }}>…</span>
+          ) : (
+            <button
+              key={p}
+              onClick={() => onPage(p)}
+              style={styles.pageBtn(p === page, false, isDark)}
+            >
+              {p}
+            </button>
+          )
         )}
-        <SalePageBtn disabled={page >= totalPages} onClick={() => onPage(page+1)}>Next ›</SalePageBtn>
+        <button
+          onClick={() => onPage(page+1)}
+          disabled={page >= totalPages}
+          style={styles.pageBtn(false, page >= totalPages, isDark)}
+        >
+          Next ›
+        </button>
       </div>
     </div>
   );
 }
 
-function SalePageBtn({ onClick, disabled, active, children }) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      padding:'5px 10px', borderRadius:7, border:'1.5px solid',
-      borderColor: active ? '#2E75B6' : '#e5e7eb',
-      background: active ? '#2E75B6' : disabled ? '#f9fafb' : '#fff',
-      color: active ? '#fff' : disabled ? '#d1d5db' : '#374151',
-      fontSize:13, fontWeight: active ? 700 : 500,
-      cursor: disabled ? 'not-allowed' : 'pointer',
-      minWidth:34, transition:'all .1s',
-    }}>{children}</button>
-  );
-}
+// ── Bootstrap 5 Design Styles ──
+const styles = {
+  page: (isDark) => ({
+    background: isDark ? 'var(--bg-page)' : '#f8f9fa',
+    minHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+  }),
 
-// ─────────────────────────────────────────────────────────────────────────────
-const s = {
-  page:         { padding: 24, maxWidth: 1300, margin: '0 auto' },
-  header:       { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 },
-  headerLeft:   { display: 'flex', alignItems: 'center', gap: 14 },
-  headerIcon:   { fontSize: 36 },
-  headerSub:    { fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: 1 },
-  headerTitle:  { fontSize: '1.5rem', fontWeight: 700, color: '#1e2a3b' },
-  addBtn:       { background: '#2E75B6', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer' },
+  header: (isDark) => ({
+    background: isDark
+      ? 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)'
+      : 'linear-gradient(135deg, #212529 0%, #0d6efd 100%)',
+    padding: '24px 28px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+    boxShadow: '0 .125rem .25rem rgba(0,0,0,.075)',
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : 'rgba(255,255,255,0.1)'}`,
+  }),
 
-  statsRow:     { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 12, marginBottom: 20 },
-  statCard:     { background: '#fff', borderRadius: 10, padding: '12px 16px', boxShadow: '0 1px 6px rgba(0,0,0,.07)', textAlign: 'center' },
-  statVal:      { fontSize: '1.3rem', fontWeight: 800 },
-  statLabel:    { fontSize: 11, color: '#888', marginTop: 2 },
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+  },
 
-  filterRow:    { display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
-  searchBox:    { flex: 1, minWidth: 160, padding: '8px 12px', border: '1px solid #dde', borderRadius: 8, fontSize: 13 },
-  filterSelect: { padding: '8px 10px', border: '1px solid #dde', borderRadius: 8, fontSize: 13, background: '#fff' },
-  dateInput:    { padding: '8px 10px', border: '1px solid #dde', borderRadius: 8, fontSize: 13 },
-  pills:        { display: 'flex', gap: 6 },
-  pill:         { border: '1px solid #dde', background: '#f8f9fa', borderRadius: 20, padding: '5px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 600, color: '#555' },
-  pillActive:   { background: '#2E75B6', color: '#fff', borderColor: '#2E75B6' },
-  viewToggle:   { display: 'flex', border: '1px solid #dde', borderRadius: 8, overflow: 'hidden' },
-  viewBtn:      { border: 'none', background: '#f8f9fa', padding: '7px 13px', cursor: 'pointer', fontSize: 15, color: '#777' },
-  viewBtnActive:{ background: '#2E75B6', color: '#fff' },
+  headerIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    background: 'rgba(255,255,255,0.16)',
+    backdropFilter: 'blur(8px)',
+    border: '1px solid rgba(255,255,255,0.25)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 22,
+    color: '#fff',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+  },
 
-  saleCardGrid:     { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: 14 },
-  saleCard:         { background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 1px 6px rgba(0,0,0,.08)', display: 'flex', flexDirection: 'column', gap: 8 },
-  saleCardHead:     { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  saleCardLot:      { fontWeight: 800, fontSize: '1.1rem', color: '#1e2a3b' },
-  saleCardSize:     { fontSize: 12, color: '#888', marginTop: 1 },
-  saleCardCustomer: { fontSize: 13, fontWeight: 600, color: '#444' },
-  saleCardDate:     { fontSize: 12, color: '#aaa' },
-  saleCardAmounts:  { display: 'flex', justifyContent: 'space-between', background: '#f8f9fa', borderRadius: 8, padding: '8px 12px' },
-  saleCardAmtItem:  { textAlign: 'center', flex: 1 },
-  saleCardAmtLabel: { fontSize: 10, color: '#888', marginBottom: 1 },
-  saleCardAmtVal:   { fontWeight: 700, fontSize: '0.95rem', color: '#1e2a3b' },
+  headerBreadcrumb: {
+    fontSize: 11,
+    color: '#ced4da',
+    letterSpacing: '0.08em',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  },
 
-  loading:      { padding: 60, textAlign: 'center', color: '#888' },
+  headerTitle: (isDark) => ({
+    fontSize: 23,
+    fontWeight: 800,
+    color: '#ffffff',
+    letterSpacing: '-0.02em',
+    margin: 0,
+  }),
 
-  tableWrap:    { background: '#fff', borderRadius: 10, boxShadow: '0 1px 6px rgba(0,0,0,.07)', overflow: 'auto' },
-  table:        { width: '100%', borderCollapse: 'collapse' },
-  thead:        { background: '#f8f9fa' },
-  th:           { padding: '11px 12px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: '#555', borderBottom: '2px solid #eee', whiteSpace: 'nowrap' },
-  tr:           { borderBottom: '1px solid #f0f0f0' },
-  td:           { padding: '10px 12px', fontSize: 13, color: '#333', verticalAlign: 'middle', whiteSpace: 'nowrap' },
-  statusBadge:  { display: 'inline-block', fontSize: 11, fontWeight: 700, borderRadius: 4, padding: '3px 8px' },
-  payBtn:       { background: '#f0fdf4', color: '#15803d', border: '1px solid #86efac', borderRadius: 5, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600 },
-  editBtn:      { background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: 5, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600 },
-  delBtn:       { background: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: 5, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontWeight: 600 },
+  headerBadge: {
+    background: 'rgba(255,255,255,0.15)',
+    border: '1px solid rgba(255,255,255,0.25)',
+    color: '#ffffff',
+    borderRadius: 20,
+    padding: '5px 12px',
+    fontSize: 12,
+    fontWeight: 700,
+  },
 
-  overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 },
-  modal:        { background: '#fff', borderRadius: 14, padding: 28, width: '100%', maxWidth: 560, boxShadow: '0 8px 40px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: '92vh', overflowY: 'auto' },
-  modalTitle:   { fontSize: '1.15rem', fontWeight: 700, color: '#1e2a3b' },
-  label:        { fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 2, display: 'block' },
-  input:        { width: '100%', padding: '8px 10px', border: '1px solid #dde', borderRadius: 7, fontSize: 13, boxSizing: 'border-box' },
-  formGrid:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  calcRow:      { display: 'flex', gap: 12, background: '#f8f9fa', borderRadius: 10, padding: 12 },
-  calcItem:     { flex: 1, textAlign: 'center' },
-  calcLabel:    { fontSize: 11, color: '#888', marginBottom: 2 },
-  calcVal:      { fontWeight: 700, fontSize: '1rem', color: '#1e2a3b' },
-  errMsg:       { color: '#dc2626', fontSize: 12, background: '#fef2f2', padding: '8px 12px', borderRadius: 6 },
-  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 },
-  cancelBtn:    { background: '#f1f5f9', color: '#333', border: 'none', borderRadius: 7, padding: '9px 18px', fontWeight: 600, cursor: 'pointer', fontSize: 13 },
-  saveBtn:      { background: '#2E75B6', color: '#fff', border: 'none', borderRadius: 7, padding: '9px 22px', fontWeight: 700, cursor: 'pointer', fontSize: 13 },
+  headerSubBadge: (isDark) => ({
+    background: 'rgba(255,255,255,0.1)',
+    color: '#e2e8f0',
+    borderRadius: 20,
+    padding: '5px 12px',
+    fontSize: 12,
+    fontWeight: 600,
+  }),
 
-  payHeader:       { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
-  payTotals:       { display: 'flex', gap: 12, background: '#f8f9fa', borderRadius: 10, padding: '10px 16px' },
-  payTotalItem:    { flex: 1, textAlign: 'center' },
-  payHistoryLabel: { fontSize: 12, fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: .5 },
-  payList:         { display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' },
-  payRow:          { display: 'flex', alignItems: 'center', gap: 10, background: '#f8f9fa', borderRadius: 8, padding: '8px 12px' },
-  addPayForm:      { background: '#f0f7ff', borderRadius: 10, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, border: '1px solid #bfdbfe' },
+  addBtn: {
+    background: '#198754',
+    color: '#ffffff',
+    border: '1px solid #146c43',
+    borderRadius: 8,
+    padding: '8px 16px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    boxShadow: '0 2px 6px rgba(25, 135, 84, 0.35)',
+    transition: 'all .15s',
+  },
+
+  content: {
+    padding: '20px 24px 36px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 20,
+  },
+
+  kpiGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: 14,
+  },
+
+  filterToolbar: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 12,
+    padding: '12px 18px',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    boxShadow: '0 .125rem .25rem rgba(0,0,0,.04)',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  }),
+
+  input: (isDark) => ({
+    background: isDark ? 'var(--bg-subtle)' : '#ffffff',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+    borderRadius: 8,
+    padding: '7px 12px',
+    fontSize: 13,
+    color: isDark ? 'var(--text-main)' : '#212529',
+    outline: 'none',
+    width: '100%',
+    boxSizing: 'border-box',
+  }),
+
+  select: (isDark) => ({
+    background: isDark ? 'var(--bg-subtle)' : '#ffffff',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+    borderRadius: 8,
+    padding: '7px 12px',
+    fontSize: 13,
+    color: isDark ? 'var(--text-main)' : '#212529',
+    outline: 'none',
+    cursor: 'pointer',
+  }),
+
+  statusPill: (active, key, isDark) => {
+    let activeBg = BT.primary;
+    if (key === 'Paid') activeBg = BT.success;
+    if (key === 'Partial') activeBg = BT.orange;
+    if (key === 'Pending') activeBg = '#e0a800';
+    if (key === 'Outstanding') activeBg = BT.danger;
+
+    return {
+      padding: '6px 14px',
+      borderRadius: 20,
+      fontSize: 12,
+      fontWeight: 700,
+      cursor: 'pointer',
+      border: active ? `1px solid ${activeBg}` : `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+      background: active ? activeBg : isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+      color: active ? '#ffffff' : isDark ? 'var(--text-muted)' : '#495057',
+      transition: 'all 0.15s ease',
+    };
+  },
+
+  clearBtn: {
+    background: '#dc3545',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 20,
+    padding: '5px 12px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+
+  viewToggle: (isDark) => ({
+    display: 'flex',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+    borderRadius: 8,
+    overflow: 'hidden',
+  }),
+
+  viewBtn: (active, isDark) => ({
+    border: 'none',
+    background: active ? BT.primary : isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    color: active ? '#ffffff' : isDark ? 'var(--text-muted)' : '#6c757d',
+    padding: '6px 12px',
+    cursor: 'pointer',
+    fontSize: 14,
+    fontWeight: 700,
+  }),
+
+  cardBox: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    boxShadow: '0 .125rem .25rem rgba(0,0,0,.04)',
+    overflow: 'hidden',
+  }),
+
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: 13,
+  },
+
+  th: (isDark, alignRight = false) => ({
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    padding: '12px 14px',
+    textAlign: alignRight ? 'right' : 'left',
+    fontSize: 11,
+    fontWeight: 800,
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    borderBottom: `2px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    whiteSpace: 'nowrap',
+  }),
+
+  tr: (isDark, isEven) => ({
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#f1f5f9'}`,
+    background: isEven ? (isDark ? 'var(--bg-card)' : '#ffffff') : (isDark ? 'rgba(255,255,255,0.015)' : '#fafbfc'),
+    transition: 'background 0.1s ease',
+  }),
+
+  td: (isDark) => ({
+    padding: '11px 14px',
+    color: isDark ? 'var(--text-main)' : '#212529',
+    verticalAlign: 'middle',
+    whiteSpace: 'nowrap',
+  }),
+
+  lotBadge: {
+    background: '#e7f1ff',
+    color: '#0d6efd',
+    borderRadius: 6,
+    padding: '2px 8px',
+    fontWeight: 800,
+    fontSize: 12,
+    display: 'inline-block',
+  },
+
+  statusBadge: (status) => {
+    const s = STATUS_COLORS[status] || STATUS_COLORS.Pending;
+    return {
+      display: 'inline-block',
+      fontSize: 11,
+      fontWeight: 800,
+      borderRadius: 20,
+      padding: '3px 10px',
+      background: s.bg,
+      color: s.color,
+      border: `1px solid ${s.border}`,
+      textTransform: 'capitalize',
+    };
+  },
+
+  btnPaySm: {
+    background: '#d1e7dd',
+    color: '#0f5132',
+    border: '1px solid #badbcc',
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'all .1s',
+  },
+
+  btnEditSm: {
+    background: '#cfe2ff',
+    color: '#084298',
+    border: '1px solid #b6d4fe',
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'all .1s',
+  },
+
+  btnDelSm: {
+    background: '#f8d7da',
+    color: '#842029',
+    border: '1px solid #f5c2c7',
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'all .1s',
+  },
+
+  pageBtn: (active, disabled, isDark) => ({
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: `1px solid ${active ? BT.primary : isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    background: active ? BT.primary : isDark ? 'var(--bg-card)' : '#ffffff',
+    color: active ? '#ffffff' : disabled ? '#adb5bd' : isDark ? 'var(--text-main)' : '#212529',
+    fontSize: 12,
+    fontWeight: active ? 700 : 500,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    minWidth: 32,
+  }),
+
+  empty: (isDark) => ({
+    textAlign: 'center',
+    padding: '40px 16px',
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    fontSize: 14,
+  }),
+
+  cardGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))',
+    gap: 16,
+  },
+
+  orderCard: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    padding: '16px 18px',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    boxShadow: '0 .125rem .25rem rgba(0,0,0,.04)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  }),
+
+  orderCardHead: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+
+  orderCustomer: (isDark) => ({
+    fontSize: 14,
+    fontWeight: 800,
+    color: isDark ? '#ffffff' : '#212529',
+    marginTop: 4,
+  }),
+
+  orderAmountsBox: (isDark) => ({
+    display: 'flex',
+    justifyContent: 'space-between',
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    borderRadius: 10,
+    padding: '10px 12px',
+    marginTop: 4,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#e9ecef'}`,
+  }),
+
+  amtLabel: (isDark) => ({
+    fontSize: 10,
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  }),
+
+  amtVal: (isDark) => ({
+    fontWeight: 800,
+    fontSize: 13,
+    marginTop: 2,
+  }),
+
+  progressBarBg: (isDark) => ({
+    background: isDark ? '#334155' : '#e9ecef',
+    borderRadius: 10,
+    height: 6,
+    overflow: 'hidden',
+    marginTop: 2,
+  }),
+
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 10,
+    transition: 'width 0.3s ease',
+  },
+
+  emptyCardBox: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    padding: '40px',
+    textAlign: 'center',
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+  }),
+
+  loadingBox: (isDark) => ({
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '60px 20px',
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+  }),
+
+  spinner: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
+    border: `3px solid rgba(13, 110, 253, 0.2)`,
+    borderTopColor: BT.primary,
+    animation: 'spin 0.8s linear infinite',
+  },
+
+  // ── Modals ──
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.55)',
+    backdropFilter: 'blur(3px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1050,
+    padding: 16,
+  },
+
+  modal: (isDark) => ({
+    background: isDark ? '#1e293b' : '#ffffff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 580,
+    boxShadow: '0 1rem 3rem rgba(0,0,0,.25)',
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: '92vh',
+    overflowY: 'auto',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+  }),
+
+  modalHeader: (isDark) => ({
+    padding: '16px 24px',
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+  }),
+
+  closeBtn: {
+    background: 'none',
+    border: 'none',
+    fontSize: 18,
+    cursor: 'pointer',
+    color: '#6c757d',
+  },
+
+  label: (isDark) => ({
+    fontSize: 12,
+    fontWeight: 700,
+    color: isDark ? 'var(--text-main)' : '#495057',
+    marginBottom: 4,
+    display: 'block',
+  }),
+
+  formGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 12,
+  },
+
+  calcPreviewBox: (isDark) => ({
+    display: 'flex',
+    gap: 12,
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    borderRadius: 12,
+    padding: '12px 16px',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+  }),
+
+  calcLabel: (isDark) => ({
+    fontSize: 11,
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  }),
+
+  calcVal: (isDark) => ({
+    fontWeight: 800,
+    fontSize: 14,
+    color: isDark ? '#ffffff' : '#212529',
+    marginTop: 2,
+  }),
+
+  errorAlert: {
+    background: '#f8d7da',
+    border: '1px solid #f5c2c7',
+    borderRadius: 8,
+    padding: '10px 14px',
+    color: '#842029',
+    fontSize: 12,
+    fontWeight: 600,
+  },
+
+  warningBox: {
+    background: '#fff3cd',
+    border: '1px solid #ffecb5',
+    borderRadius: 8,
+    padding: '10px 14px',
+    fontSize: 12,
+    color: '#664d03',
+  },
+
+  btnPrimary: {
+    background: BT.primary,
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 20px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(13, 110, 253, 0.35)',
+  },
+
+  btnSecondary: {
+    background: '#6c757d',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+
+  btnSuccess: {
+    background: BT.success,
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(25, 135, 84, 0.35)',
+  },
+
+  btnSuccessWide: {
+    background: BT.success,
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '10px 16px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    width: '100%',
+    textAlign: 'center',
+    boxShadow: '0 2px 6px rgba(25, 135, 84, 0.35)',
+  },
+
+  btnDanger: {
+    background: BT.danger,
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(220, 53, 69, 0.35)',
+  },
+
+  payRow: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    borderRadius: 10,
+    padding: '10px 14px',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#e9ecef'}`,
+  }),
+
+  addPayBox: (isDark) => ({
+    background: isDark ? 'rgba(13, 110, 253, 0.08)' : '#f0f7ff',
+    borderRadius: 12,
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    border: `1px solid ${isDark ? 'rgba(13, 110, 253, 0.3)' : '#bfdbfe'}`,
+  }),
+
+  financeSyncBox: (isDark) => ({
+    background: isDark ? 'rgba(25, 135, 84, 0.08)' : '#f0fdf4',
+    borderRadius: 10,
+    padding: '12px 14px',
+    border: `1px solid ${isDark ? 'rgba(25, 135, 84, 0.3)' : '#bbf7d0'}`,
+  }),
 };

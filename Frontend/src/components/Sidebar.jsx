@@ -1,8 +1,6 @@
-import { useState, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { getWorkers } from '../services/api';
 
 const ROLE_COLORS = { Admin: '#2E75B6', Manager: '#70AD47', Viewer: '#C55A11' };
 
@@ -11,16 +9,11 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { user, logout, can } = useAuth();
   const { mode, activeMode, toggleMode, openThemeModal, currentColor, isDark } = useTheme();
-  const [workers, setWorkers] = useState([]);
 
-  useEffect(() => {
-    getWorkers()
-      .then(ws => setWorkers(ws.map(w => ({ path: `/worker/${w.id}`, label: w.name }))))
-      .catch(() => {});
-  }, []);
-
-  const isWorkerActive = location.pathname.startsWith('/worker/') || location.pathname === '/ali-hassan';
-  const [workersOpen, setWorkersOpen] = useState(isWorkerActive);
+  const isWorkerActive = location.pathname === '/staff' ||
+                         location.pathname.startsWith('/staff/') ||
+                         location.pathname.startsWith('/worker/') ||
+                         location.pathname === '/ali-hassan';
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -44,7 +37,7 @@ export default function Sidebar() {
         </div>
       )}
 
-      <nav style={{ flex: 1, overflowY: 'auto' }}>
+      <nav style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none' }} className="hide-scrollbar">
         <div style={ss.divider}>MODULES</div>
 
         <NavLink to="/dashboard" style={({ isActive }) => ss.link(isActive)}>
@@ -60,6 +53,12 @@ export default function Sidebar() {
         {can('canViewWages') && (
           <NavLink to="/wages" style={({ isActive }) => ss.link(isActive)}>
             💼 Payroll
+          </NavLink>
+        )}
+
+        {can('canViewWages') && (
+          <NavLink to="/worker-payments" style={({ isActive }) => ss.link(isActive)}>
+            💵 Worker Payments
           </NavLink>
         )}
 
@@ -107,20 +106,9 @@ export default function Sidebar() {
 
         <div style={ss.divider}>WORKFORCE</div>
 
-        <button onClick={() => setWorkersOpen(o => !o)} style={ss.collapseBtn(isWorkerActive)}>
-          <span>👷 Staff</span>
-          <span style={{ fontSize: 11, display: 'inline-block', transition: 'transform .2s', transform: workersOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
-        </button>
-
-        {workersOpen && (
-          <div style={ss.subMenu}>
-            {workers.map(w => (
-              <NavLink key={w.path} to={w.path} style={({ isActive }) => ss.subLink(isActive)}>
-                {w.label}
-              </NavLink>
-            ))}
-          </div>
-        )}
+        <NavLink to="/staff" style={({ isActive }) => ss.link(isActive || isWorkerActive)}>
+          👷 Staff
+        </NavLink>
       </nav>
 
       <div style={ss.bottom}>
@@ -160,7 +148,7 @@ export default function Sidebar() {
 }
 
 const ss = {
-  aside:       { width: 210, minHeight: '100vh', background: '#1e2a3b', display: 'flex', flexDirection: 'column', flexShrink: 0 },
+  aside:       { width: 210, height: '100vh', background: '#1e2a3b', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'sticky', top: 0, overflow: 'hidden' },
   logo:        { padding: '1.2rem 1rem', color: '#fff', fontWeight: 600, fontSize: '1rem', borderBottom: '1px solid #2e3d52' },
   userBox:     { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid #2e3d52', background: '#161f2d' },
   avatar:      { width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16, flexShrink: 0 },

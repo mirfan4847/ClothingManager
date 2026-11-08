@@ -4,9 +4,7 @@ import WorkerTable from '../components/WorkerTable';
 const WORKER_ID = 1;
 
 const COLUMNS = [
-  { key: 'size',           label: 'Size' },
   { key: 'lotNumber',      label: 'Lot Number' },
-  { key: 'color',          label: 'Color' },
   { key: 'front',          label: 'Front' },
   { key: 'bazo',           label: 'Bazo' },
   { key: 'quantity',       label: 'Quantity' },

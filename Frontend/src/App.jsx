@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
@@ -12,13 +13,13 @@ import PurchasingModule from './pages/PurchasingModule';
 import InventoryModule from './pages/InventoryModule';
 import CustomerModule from './pages/CustomerModule';
 import SaleModule from './pages/SaleModule';
-import AliHassan from './pages/AliHassan';
 import WageModule from './pages/WageModule';
+import WorkerPaymentModule from './pages/WorkerPaymentModule';
 import LotStatus from './pages/LotStatus';
 import ActivityLog from './pages/ActivityLog';
 import ReportsModule from './pages/ReportsModule';
 import Dashboard from './pages/Dashboard';
-import { Faizan, GujjarPress, Arslan, Nazir, UmerSafty, NaveedRafo, BhattiKaj, Button, GenericWorker } from './pages/WorkerPages';
+import StaffModule from './pages/StaffModule';
 
 function RequireAuth({ children }) {
   const { user } = useAuth();
@@ -30,7 +31,7 @@ function RequireRole({ children, permission }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
 
-  const hasPermission = user.permissions?.[permission] ?? false;
+  const hasPermission = user.role === 'Admin' || (user.permissions?.[permission] ?? false);
 
   if (!hasPermission) return (
     <div style={{
@@ -57,6 +58,21 @@ function AppLayout() {
   const { user } = useAuth();
   const { isDark } = useTheme();
 
+  useEffect(() => {
+    const handleDateInputClick = (e) => {
+      const target = e.target;
+      if (target && target.tagName === 'INPUT' && target.type === 'date' && !target.disabled && !target.readOnly) {
+        try {
+          if (typeof target.showPicker === 'function') {
+            target.showPicker();
+          }
+        } catch {}
+      }
+    };
+    document.addEventListener('click', handleDateInputClick);
+    return () => document.removeEventListener('click', handleDateInputClick);
+  }, []);
+
   if (!user) {
     return (
       <Routes>
@@ -67,14 +83,15 @@ function AppLayout() {
   }
 
   return (
-    <div style={{ display:'flex', minHeight:'100vh', fontFamily:'Segoe UI, Arial, sans-serif' }}>
+    <div style={{ display:'flex', height:'100vh', width:'100vw', overflow:'hidden', fontFamily:'Segoe UI, Arial, sans-serif' }}>
       <Sidebar />
-      <main style={{ flex:1, background: isDark ? 'var(--bg-page)' : '#f4f6f9', overflowX:'auto' }}>
+      <main style={{ flex:1, height:'100vh', overflowY:'auto', overflowX:'hidden', background: isDark ? 'var(--bg-page)' : '#f4f6f9' }} className="hide-scrollbar">
         <Routes>
           <Route path="/"             element={<Navigate to="/dashboard" replace />} />
           <Route path="/login"        element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard"    element={<RequireAuth><Dashboard /></RequireAuth>} />
           <Route path="/wages"        element={<RequireRole permission="canViewWages"><WageModule /></RequireRole>} />
+          <Route path="/worker-payments" element={<RequireRole permission="canViewWages"><WorkerPaymentModule /></RequireRole>} />
           <Route path="/labour"       element={<RequireAuth><LabourModule /></RequireAuth>} />
           <Route path="/settings"     element={<RequireRole permission="canViewSettings"><Settings /></RequireRole>} />
           <Route path="/purchasing"   element={<RequireAuth><PurchasingModule /></RequireAuth>} />
@@ -86,16 +103,18 @@ function AppLayout() {
           <Route path="/activity-log" element={<RequireAuth><ActivityLog /></RequireAuth>} />
           <Route path="/reports"      element={<RequireAuth><ReportsModule /></RequireAuth>} />
           <Route path="/lot-status"    element={<RequireAuth><LotStatus /></RequireAuth>} />
-          <Route path="/ali-hassan"   element={<RequireAuth><AliHassan /></RequireAuth>} />
-          <Route path="/faizan"       element={<RequireAuth><Faizan /></RequireAuth>} />
-          <Route path="/gujjar-press" element={<RequireAuth><GujjarPress /></RequireAuth>} />
-          <Route path="/arslan"       element={<RequireAuth><Arslan /></RequireAuth>} />
-          <Route path="/nazir"        element={<RequireAuth><Nazir /></RequireAuth>} />
-          <Route path="/umer-safty"   element={<RequireAuth><UmerSafty /></RequireAuth>} />
-          <Route path="/naveed-rafo"  element={<RequireAuth><NaveedRafo /></RequireAuth>} />
-          <Route path="/bhatti-kaj"   element={<RequireAuth><BhattiKaj /></RequireAuth>} />
-          <Route path="/button"       element={<RequireAuth><Button /></RequireAuth>} />
-          <Route path="/worker/:id"   element={<RequireAuth><GenericWorker /></RequireAuth>} />
+          <Route path="/staff"        element={<RequireAuth><StaffModule /></RequireAuth>} />
+          <Route path="/staff/:id"    element={<RequireAuth><StaffModule /></RequireAuth>} />
+          <Route path="/worker/:id"   element={<RequireAuth><StaffModule /></RequireAuth>} />
+          <Route path="/ali-hassan"   element={<Navigate to="/staff/1" replace />} />
+          <Route path="/faizan"       element={<Navigate to="/staff/2" replace />} />
+          <Route path="/gujjar-press" element={<Navigate to="/staff/3" replace />} />
+          <Route path="/arslan"       element={<Navigate to="/staff/4" replace />} />
+          <Route path="/nazir"        element={<Navigate to="/staff/5" replace />} />
+          <Route path="/umer-safty"   element={<Navigate to="/staff/6" replace />} />
+          <Route path="/naveed-rafo"  element={<Navigate to="/staff/7" replace />} />
+          <Route path="/bhatti-kaj"   element={<Navigate to="/staff/8" replace />} />
+          <Route path="/button"       element={<Navigate to="/staff/9" replace />} />
         </Routes>
       </main>
       <ThemeModal />
@@ -103,9 +122,25 @@ function AppLayout() {
   );
 }
 
+function getRouterBasename() {
+  const path = window.location.pathname || '/';
+  const firstSegment = path.split('/').filter(Boolean)[0];
+  const appRoutes = new Set([
+    'login', 'dashboard', 'wages', 'worker-payments', 'labour', 'settings', 'purchasing',
+    'inventory', 'customers', 'sales', 'accounts', 'roles', 'activity-log',
+    'reports', 'lot-status', 'staff', 'worker', 'ali-hassan', 'faizan',
+    'gujjar-press', 'arslan', 'nazir', 'umer-safty', 'naveed-rafo',
+    'bhatti-kaj', 'button'
+  ]);
+  if (firstSegment && !appRoutes.has(firstSegment.toLowerCase())) {
+    return `/${firstSegment}`;
+  }
+  return '/';
+}
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={getRouterBasename()}>
       <ThemeProvider>
         <AuthProvider>
           <AppLayout />

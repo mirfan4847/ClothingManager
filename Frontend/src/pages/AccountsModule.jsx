@@ -3,13 +3,30 @@ import {
   getAccountSummary, getAccountCategories, getAccounts,
   createAccount, updateAccount, getTransactions, addTransaction, deleteTransaction
 } from '../services/api';
+import { useTheme } from '../context/ThemeContext';
 
-const CAT_COLORS = { Income: '#70AD47', Expense: '#BE0000', Asset: '#2E75B6', Liability: '#C55A11', Cash: '#7030A0' };
-const TABS = ['Overview', 'Accounts', 'Transactions', 'Ledger'];
+// ── Bootstrap Category Palette ──
+const CAT_COLORS = {
+  Income:    { bg: '#d1e7dd', color: '#0f5132', border: '#badbcc' },
+  Expense:   { bg: '#f8d7da', color: '#842029', border: '#f5c2c7' },
+  Asset:     { bg: '#cfe2ff', color: '#084298', border: '#b6d4fe' },
+  Liability: { bg: '#fff3cd', color: '#664d03', border: '#ffecb5' },
+  Cash:      { bg: '#cff4fc', color: '#055160', border: '#b6effb' },
+};
+
+const TABS = [
+  { key: 'Overview',     icon: '📊', label: 'Overview' },
+  { key: 'Accounts',     icon: '🏦', label: 'Accounts' },
+  { key: 'Transactions', icon: '🧾', label: 'Transactions' },
+  { key: 'Ledger',       icon: '📑', label: 'Ledger' },
+];
+
 const initAccForm = { name: '', categoryId: '', openingBalance: '', description: '' };
 const initTxForm  = { accountId: '', type: 'Credit', amount: '', description: '', referenceNo: '', date: new Date().toISOString().split('T')[0] };
 
 export default function AccountsModule() {
+  const { isDark, currentColor } = useTheme();
+
   const [tab, setTab]               = useState('Overview');
   const [summary, setSummary]       = useState(null);
   const [categories, setCategories] = useState([]);
@@ -44,27 +61,40 @@ export default function AccountsModule() {
       setAccounts(accs);
       setTx(txs);
     } catch (e) {
-      setError('Failed to load data. Make sure the backend is running on http://localhost:5001');
+      setError('Failed to load financial data. Ensure the backend is active.');
     }
     setLoading(false);
   };
 
   useEffect(() => { loadAll(); }, []);
 
-  const fmt = (n) => 'PKR ' + Number(n || 0).toLocaleString();
+  const fmt = (n) => 'PKR ' + Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
   const saveAccount = async () => {
     if (!accForm.name || !accForm.categoryId) return;
     setSaving(true);
     try {
       if (editAcc) {
-        await updateAccount(editAcc.id, { name: accForm.name, categoryId: Number(accForm.categoryId), description: accForm.description });
+        await updateAccount(editAcc.id, {
+          name: accForm.name,
+          categoryId: Number(accForm.categoryId),
+          description: accForm.description,
+        });
       } else {
-        await createAccount({ name: accForm.name, categoryId: Number(accForm.categoryId), openingBalance: Number(accForm.openingBalance) || 0, description: accForm.description });
+        await createAccount({
+          name: accForm.name,
+          categoryId: Number(accForm.categoryId),
+          openingBalance: Number(accForm.openingBalance) || 0,
+          description: accForm.description,
+        });
       }
+      setShowAccForm(false);
+      setAccForm(initAccForm);
+      setEditAcc(null);
       await loadAll();
-      setShowAccForm(false); setAccForm(initAccForm); setEditAcc(null);
-    } catch { setError('Failed to save account.'); }
+    } catch {
+      setError('Failed to save account.');
+    }
     setSaving(false);
   };
 
@@ -72,148 +102,309 @@ export default function AccountsModule() {
     if (!txForm.accountId || !txForm.amount || !txForm.description) return;
     setSaving(true);
     try {
-      await addTransaction({ accountId: Number(txForm.accountId), type: txForm.type, amount: Number(txForm.amount), description: txForm.description, referenceNo: txForm.referenceNo, date: new Date(txForm.date).toISOString() });
+      await addTransaction({
+        accountId: Number(txForm.accountId),
+        type: txForm.type,
+        amount: Number(txForm.amount),
+        description: txForm.description,
+        referenceNo: txForm.referenceNo || null,
+        date: new Date(txForm.date).toISOString(),
+      });
+      setShowTxForm(false);
+      setTxForm(initTxForm);
       await loadAll();
-      setShowTxForm(false); setTxForm(initTxForm);
-    } catch { setError('Failed to save transaction.'); }
+    } catch {
+      setError('Failed to record transaction.');
+    }
     setSaving(false);
   };
 
   const handleDeleteTx = async (id) => {
     try {
       await deleteTransaction(id);
+      setDeleteConfirm(null);
       await loadAll();
-    } catch { setError('Failed to delete transaction.'); }
-    setDeleteConfirm(null);
+    } catch {
+      setError('Failed to delete transaction.');
+    }
   };
 
-  const filteredTx = transactions.filter(t => {
-    if (filterAcc && t.accountId !== Number(filterAcc)) return false;
-    if (filterCat) {
-      const acc = accounts.find(a => a.id === t.accountId);
-      if (!acc || acc.categoryName !== filterCat) return false;
-    }
-    return true;
-  });
+  const goToTx = (catName) => {
+    setTab('Transactions');
+    setFilterCat(catName);
+    setFilterAcc('');
+  };
 
-  const goToTx = (cat) => { setTab('Transactions'); setFilterCat(cat); setFilterAcc(''); };
-  const goToAccounts = (cat) => { setTab('Accounts'); setFilterCat(cat); setFilterAcc(''); };
+  const goToAccounts = (cat) => {
+    setTab('Accounts');
+    setFilterCat(cat);
+    setFilterAcc('');
+  };
 
-  if (loading) return <div style={s.loading}>⏳ Loading accounts data...</div>;
+  if (loading) {
+    return (
+      <div style={styles.loadingBox(isDark)}>
+        <div style={styles.spinner} />
+        <div style={{ marginTop: 14, fontWeight: 600 }}>Loading financial ledger...</div>
+      </div>
+    );
+  }
 
   return (
-    <div style={s.page}>
-      {/* Header */}
-      <div style={s.header}>
-        <div>
-          <div style={s.headerLabel}>Accounts</div>
-          <div style={s.headerTitle}>Finance</div>
+    <div style={styles.page(isDark)} className="hide-scrollbar">
+      {/* ── Executive Header Banner (Bootstrap 5 Style) ── */}
+      <div style={styles.header(isDark)}>
+        <div style={styles.headerLeft}>
+          <div style={styles.headerIconWrap}>
+            <span>🏦</span>
+          </div>
+          <div>
+            <div style={styles.headerBreadcrumb}>FINANCIAL LEDGER</div>
+            <h1 style={styles.headerTitle(isDark)}>Accounts &amp; Finance</h1>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button style={s.btn('#2E75B6')} onClick={() => { setShowAccForm(true); setEditAcc(null); setAccForm(initAccForm); }}>+ New Account</button>
-          <button style={s.btn('#70AD47')} onClick={() => setShowTxForm(true)}>+ Add Transaction</button>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            style={styles.btnPrimary}
+            onClick={() => { setShowAccForm(true); setEditAcc(null); setAccForm(initAccForm); }}
+          >
+            + New Account
+          </button>
+          <button
+            style={styles.btnSuccess}
+            onClick={() => setShowTxForm(true)}
+          >
+            + Add Transaction
+          </button>
         </div>
       </div>
 
-      {error && <div style={s.errorBar}>⚠️ {error} <button onClick={() => setError('')} style={s.errClose}>✕</button></div>}
+      {error && (
+        <div style={styles.errorAlert}>
+          <span>⚠️ {error}</span>
+          <button onClick={() => setError('')} style={styles.alertCloseBtn}>✕</button>
+        </div>
+      )}
 
-      {/* Tabs */}
-      <div style={s.tabRow}>
-        {TABS.map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ ...s.tabBtn, ...(tab === t ? s.tabActive : {}) }}>{t}</button>
-        ))}
+      {/* ── Bootstrap Nav Pills (Tabs) ── */}
+      <div style={styles.tabBar(isDark)}>
+        {TABS.map(t => {
+          const isActive = tab === t.key;
+          return (
+            <button
+              key={t.key}
+              style={styles.tabBtn(isActive, isDark)}
+              onClick={() => setTab(t.key)}
+            >
+              <span style={{ marginRight: 6 }}>{t.icon}</span>
+              <span>{t.label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      <div style={s.body}>
+      <div style={styles.content}>
 
-        {/* ── OVERVIEW ── */}
+        {/* ── 1. OVERVIEW TAB ─────────────────────────────────────────── */}
         {tab === 'Overview' && summary && (
           <div>
-            <div style={s.statsRow}>
-              {[
-                { label: 'Total Income',      value: fmt(summary.totalIncome),      color: '#70AD47', bg: '#EEF6E6', icon: '📈', hint: 'View income transactions', onClick: () => goToTx('Income') },
-                { label: 'Total Expense',     value: fmt(summary.totalExpense),     color: '#BE0000', bg: '#FBEAEA', icon: '📉', hint: 'View expense transactions', onClick: () => goToTx('Expense') },
-                { label: 'Net Balance',       value: fmt(summary.netBalance),       color: summary.netBalance >= 0 ? '#2E75B6' : '#BE0000', bg: '#EBF3FB', icon: '💰', hint: 'View all transactions', onClick: () => goToTx('') },
-                { label: 'Total Assets',      value: fmt(summary.totalAssets),      color: '#7030A0', bg: '#F3EEF8', icon: '🏦', hint: 'View asset accounts', onClick: () => goToAccounts('Asset') },
-                { label: 'Total Liabilities', value: fmt(summary.totalLiabilities), color: '#C55A11', bg: '#FEF3EC', icon: '📋', hint: 'View liability accounts', onClick: () => goToAccounts('Liability') },
-              ].map(st => (
-                <div key={st.label}
-                  onClick={st.onClick}
-                  title={st.hint}
-                  style={{ ...s.statCard, background: st.bg, borderLeft: `4px solid ${st.color}`, cursor: 'pointer', transition: 'transform 0.1s, box-shadow 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.12)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)'; }}
-                >
-                  <div style={{ fontSize: 26 }}>{st.icon}</div>
-                  <div style={{ ...s.statNum, color: st.color }}>{st.value}</div>
-                  <div style={s.statLabel}>{st.label}</div>
-                  <div style={{ fontSize: 10, color: st.color, marginTop: 2, opacity: 0.7 }}>Click to view →</div>
-                </div>
-              ))}
+            {/* 5 Executive KPI Cards with Bootstrap Colors */}
+            <div style={styles.kpiGrid}>
+              <BtKpiCard
+                label="Total Income"
+                tag="INCOME"
+                value={fmt(summary.totalIncome)}
+                gradient="linear-gradient(135deg, #146c43 0%, #198754 100%)"
+                glow="rgba(25, 135, 84, 0.35)"
+                icon="📈"
+                hint="View income transactions"
+                onClick={() => goToTx('Income')}
+              />
+              <BtKpiCard
+                label="Total Expense"
+                tag="EXPENSES"
+                value={fmt(summary.totalExpense)}
+                gradient="linear-gradient(135deg, #b02a37 0%, #dc3545 100%)"
+                glow="rgba(220, 53, 69, 0.35)"
+                icon="📉"
+                hint="View expense transactions"
+                onClick={() => goToTx('Expense')}
+              />
+              <BtKpiCard
+                label="Net Balance"
+                tag="NET POSITION"
+                value={fmt(summary.netBalance)}
+                gradient={summary.netBalance >= 0
+                  ? 'linear-gradient(135deg, #0a58ca 0%, #0d6efd 100%)'
+                  : 'linear-gradient(135deg, #b02a37 0%, #dc3545 100%)'}
+                glow={summary.netBalance >= 0 ? 'rgba(13, 110, 253, 0.35)' : 'rgba(220, 53, 69, 0.35)'}
+                icon="💰"
+                hint="View all transactions"
+                onClick={() => goToTx('')}
+              />
+              <BtKpiCard
+                label="Total Assets"
+                tag="ASSETS"
+                value={fmt(summary.totalAssets)}
+                gradient="linear-gradient(135deg, #59359a 0%, #6f42c1 100%)"
+                glow="rgba(111, 66, 193, 0.35)"
+                icon="🏦"
+                hint="View asset accounts"
+                onClick={() => goToAccounts('Asset')}
+              />
+              <BtKpiCard
+                label="Total Liabilities"
+                tag="LIABILITIES"
+                value={fmt(summary.totalLiabilities)}
+                gradient="linear-gradient(135deg, #c2410c 0%, #fd7e14 100%)"
+                glow="rgba(253, 126, 20, 0.35)"
+                icon="📋"
+                hint="View liability accounts"
+                onClick={() => goToAccounts('Liability')}
+              />
             </div>
 
-            <div style={s.card}>
-              <div style={s.cardTitle}>Account Balances</div>
-              <table style={s.table}>
-                <thead><tr>{['Account', 'Category', 'Balance', 'Status'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {summary.accounts.map((a, i) => {
-                    const isExpense = a.categoryName === 'Expense';
-                    const dispBal   = isExpense ? Math.abs(a.balance) : a.balance;
-                    const balColor  = isExpense ? '#BE0000' : (a.balance >= 0 ? '#70AD47' : '#BE0000');
-                    return (
-                      <tr key={a.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafd' }}>
-                        <td style={s.td}><b>{a.name}</b></td>
-                        <td style={s.td}><span style={{ ...s.pill, background: (CAT_COLORS[a.categoryName] || '#888') + '22', color: CAT_COLORS[a.categoryName] || '#888' }}>{a.categoryName}</span></td>
-                        <td style={{ ...s.td, fontWeight: 700, color: balColor }}>{fmt(dispBal)}</td>
-                        <td style={s.td}><span style={a.isActive ? s.active : s.inactive}>{a.isActive ? 'Active' : 'Inactive'}</span></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={s.card}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={s.cardTitle}>Recent Transactions</div>
-                <button style={{ ...s.btn('#2E75B6'), fontSize: 12, padding: '5px 12px' }} onClick={() => { setTab('Transactions'); setFilterCat(''); setFilterAcc(''); }}>View All →</button>
+            {/* Account Balances Table Card */}
+            <div style={styles.cardBox(isDark)}>
+              <div style={styles.cardHeader(isDark)}>
+                <span style={{ fontWeight: 800, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  🏦 Account Balances
+                </span>
+                <span style={styles.countBadge}>
+                  {summary.accounts.length} Active Accounts
+                </span>
               </div>
-              <table style={s.table}>
-                <thead><tr>{['Date', 'Account', 'Description', 'Ref No', 'Type', 'Amount', ''].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {transactions.slice(0, 10).map((t, i) => (
-                    <tr key={t.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafd' }}>
-                      <td style={s.td}>{new Date(t.date).toLocaleDateString()}</td>
-                      <td style={s.td}>{t.accountName}</td>
-                      <td style={s.td}>{t.description}</td>
-                      <td style={s.td}>{t.referenceNo || '—'}</td>
-                      <td style={s.td}><span style={t.type === 'Credit' ? s.credit : s.debit}>{t.type}</span></td>
-                      <td style={{ ...s.td, fontWeight: 700, color: t.type === 'Credit' ? '#70AD47' : '#BE0000' }}>{fmt(t.amount)}</td>
-                      <td style={s.td}><button style={s.delBtn} onClick={() => setDeleteConfirm({ id: t.id, name: t.description })}>Del</button></td>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      {['Account Name', 'Category', 'Balance', 'Status'].map(h => (
+                        <th key={h} style={styles.th(isDark)}>{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                  {transactions.length === 0 && <tr><td colSpan={7} style={s.empty}>No transactions yet</td></tr>}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {summary.accounts.map((a, i) => {
+                      const isExpense = a.categoryName === 'Expense';
+                      const dispBal   = isExpense ? Math.abs(a.balance) : a.balance;
+                      const balColor  = isExpense ? '#dc3545' : (a.balance >= 0 ? '#198754' : '#dc3545');
+                      const catStyle  = CAT_COLORS[a.categoryName] || { bg: '#f8f9fa', color: '#6c757d', border: '#dee2e6' };
+
+                      return (
+                        <tr key={a.id} style={styles.tr(isDark, i % 2 === 0)}>
+                          <td style={styles.td(isDark)}>
+                            <strong>{a.name}</strong>
+                          </td>
+                          <td style={styles.td(isDark)}>
+                            <span style={styles.catPill(catStyle.bg, catStyle.color, catStyle.border)}>
+                              {a.categoryName}
+                            </span>
+                          </td>
+                          <td style={{ ...styles.td(isDark), fontWeight: 800, color: balColor, fontSize: 14 }}>
+                            {fmt(dispBal)}
+                          </td>
+                          <td style={styles.td(isDark)}>
+                            <span style={a.isActive ? styles.activeBadge : styles.inactiveBadge}>
+                              {a.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Recent Transactions Table Card */}
+            <div style={styles.cardBox(isDark)}>
+              <div style={styles.cardHeader(isDark)}>
+                <span style={{ fontWeight: 800, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  🧾 Recent Financial Transactions
+                </span>
+                <button
+                  style={styles.btnOutlinePrimary}
+                  onClick={() => { setTab('Transactions'); setFilterCat(''); setFilterAcc(''); }}
+                >
+                  View All Transactions →
+                </button>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr>
+                      {['Date', 'Account', 'Description', 'Ref No', 'Type', 'Amount', 'Action'].map(h => (
+                        <th key={h} style={styles.th(isDark)}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.slice(0, 8).map((t, i) => (
+                      <tr key={t.id} style={styles.tr(isDark, i % 2 === 0)}>
+                        <td style={styles.td(isDark)}>
+                          📅 {new Date(t.date).toLocaleDateString('en-PK')}
+                        </td>
+                        <td style={styles.td(isDark)}>
+                          <strong>{t.accountName}</strong>
+                        </td>
+                        <td style={styles.td(isDark)}>{t.description}</td>
+                        <td style={styles.td(isDark)}>
+                          <span style={styles.refBadge}>{t.referenceNo || '—'}</span>
+                        </td>
+                        <td style={styles.td(isDark)}>
+                          <span style={t.type === 'Credit' ? styles.creditBadge : styles.debitBadge}>
+                            {t.type}
+                          </span>
+                        </td>
+                        <td style={{ ...styles.td(isDark), fontWeight: 800, color: t.type === 'Credit' ? '#198754' : '#dc3545', fontSize: 14 }}>
+                          {fmt(t.amount)}
+                        </td>
+                        <td style={styles.td(isDark)}>
+                          <button
+                            style={styles.delBtn}
+                            onClick={() => setDeleteConfirm({ id: t.id, name: t.description })}
+                            title="Delete transaction"
+                          >
+                            🗑️
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {transactions.length === 0 && (
+                      <tr><td colSpan={7} style={styles.empty(isDark)}>No transactions recorded yet</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
 
-        {/* ── ACCOUNTS ── */}
+        {/* ── 2. ACCOUNTS TAB ─────────────────────────────────────────── */}
         {tab === 'Accounts' && (
-          <div style={s.card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={styles.cardBox(isDark)}>
+            <div style={styles.cardHeader(isDark)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={s.cardTitle}>{filterCat ? `${filterCat} Accounts` : 'All Accounts'}</div>
+                <span style={{ fontWeight: 800, fontSize: 13, textTransform: 'uppercase' }}>
+                  {filterCat ? `${filterCat} Accounts` : 'All Accounts'}
+                </span>
                 {filterCat && (
-                  <span style={{ background: CAT_COLORS[filterCat] + '22', color: CAT_COLORS[filterCat], borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                    onClick={() => setFilterCat('')}>
+                  <span
+                    style={{ background: '#e7f1ff', color: '#0d6efd', borderRadius: 20, padding: '2px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                    onClick={() => setFilterCat('')}
+                  >
                     {filterCat} ✕
                   </span>
                 )}
               </div>
-              <select style={s.filterSelect} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+              <select
+                style={styles.select(isDark)}
+                value={filterCat}
+                onChange={e => setFilterCat(e.target.value)}
+              >
                 <option value="">All Categories</option>
                 <option value="Income">Income</option>
                 <option value="Expense">Expense</option>
@@ -222,207 +413,268 @@ export default function AccountsModule() {
                 <option value="Liability">Liability</option>
               </select>
             </div>
-            <table style={s.table}>
-              <thead><tr>{['#', 'Account Name', 'Category', 'Description', 'Balance', 'Status', 'Actions'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {accounts.filter(a => !filterCat || a.categoryName === filterCat).map((a, i) => {
-                  const isExpense = a.categoryName === 'Expense';
-                  const dispBal   = isExpense ? Math.abs(a.balance) : a.balance;
-                  const balColor  = isExpense ? '#BE0000' : (a.balance >= 0 ? '#70AD47' : '#BE0000');
-                  return (
-                    <tr key={a.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafd' }}>
-                      <td style={s.td}>{i + 1}</td>
-                      <td style={s.td}><b>{a.name}</b></td>
-                      <td style={s.td}><span style={{ ...s.pill, background: (CAT_COLORS[a.categoryName] || '#888') + '22', color: CAT_COLORS[a.categoryName] || '#888' }}>{a.categoryName}</span></td>
-                      <td style={s.td}>{a.description || '—'}</td>
-                      <td style={{ ...s.td, fontWeight: 700, color: balColor }}>{fmt(dispBal)}</td>
-                      <td style={s.td}><span style={a.isActive ? s.active : s.inactive}>{a.isActive ? 'Active' : 'Inactive'}</span></td>
-                      <td style={s.td}>
-                        <button style={s.editBtn} onClick={() => { setEditAcc(a); setAccForm({ name: a.name, categoryId: a.categoryId, openingBalance: a.balance, description: a.description || '' }); setShowAccForm(true); }}>Edit</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {accounts.length === 0 && <tr><td colSpan={7} style={s.empty}>No accounts yet</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        )}
 
-        {/* ── TRANSACTIONS ── */}
-        {tab === 'Transactions' && (() => {
-          // Group key: for salary entries use worker name, otherwise use account name
-          const groupKey = (t) => {
-            const m = t.description?.match(/^Salary — (.+?) \(/);
-            return m ? `👤 ${m[1]}` : `🏦 ${t.accountName}`;
-          };
-          const groups = {};
-          filteredTx.forEach(t => {
-            const k = groupKey(t);
-            if (!groups[k]) groups[k] = [];
-            groups[k].push(t);
-          });
-          const toggle = (k) => setCollapsed(c => ({ ...c, [k]: !c[k] }));
-          const allOpen = Object.keys(groups).every(k => !collapsed[k]);
-
-          return (
-            <div style={s.card}>
-              {/* Toolbar */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={s.cardTitle}>{filterCat ? `${filterCat} Transactions` : 'All Transactions'}</div>
-                  {filterCat && (
-                    <span style={{ background: CAT_COLORS[filterCat] + '22', color: CAT_COLORS[filterCat], borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                      onClick={() => setFilterCat('')}>{filterCat} ✕</span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button
-                    onClick={() => { if (allOpen) { const c = {}; Object.keys(groups).forEach(k => c[k] = true); setCollapsed(c); } else setCollapsed({}); }}
-                    style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #dde3ec', background: '#f4f6f9', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
-                    {allOpen ? '▲ Collapse All' : '▼ Expand All'}
-                  </button>
-                  <button onClick={() => setGroupedView(v => !v)}
-                    style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #dde3ec', background: groupedView ? '#2E75B6' : '#f4f6f9', color: groupedView ? '#fff' : '#333', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
-                    {groupedView ? '⊞ Grouped' : '≡ Flat'}
-                  </button>
-                  <select style={s.filterSelect} value={filterCat} onChange={e => { setFilterCat(e.target.value); setFilterAcc(''); }}>
-                    <option value="">All Categories</option>
-                    <option value="Income">Income</option>
-                    <option value="Expense">Expense</option>
-                    <option value="Asset">Asset</option>
-                    <option value="Cash">Cash</option>
-                    <option value="Liability">Liability</option>
-                  </select>
-                  <select style={s.filterSelect} value={filterAcc} onChange={e => { setFilterAcc(e.target.value); setFilterCat(''); }}>
-                    <option value="">All Accounts</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <table style={s.table}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.table}>
                 <thead>
-                  <tr>{['Date', 'Account / Name', 'Description', 'Ref No', 'Type', 'Amount', ''].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+                  <tr>
+                    {['#', 'Account Name', 'Category', 'Description', 'Balance', 'Status', 'Actions'].map(h => (
+                      <th key={h} style={styles.th(isDark)}>{h}</th>
+                    ))}
+                  </tr>
                 </thead>
                 <tbody>
-                  {filteredTx.length === 0 && <tr><td colSpan={7} style={s.empty}>No transactions found</td></tr>}
+                  {accounts.filter(a => !filterCat || a.categoryName === filterCat).map((a, i) => {
+                    const isExpense = a.categoryName === 'Expense';
+                    const dispBal   = isExpense ? Math.abs(a.balance) : a.balance;
+                    const balColor  = isExpense ? '#dc3545' : (a.balance >= 0 ? '#198754' : '#dc3545');
+                    const catStyle  = CAT_COLORS[a.categoryName] || { bg: '#f8f9fa', color: '#6c757d', border: '#dee2e6' };
 
-                  {groupedView
-                    ? Object.entries(groups).map(([key, rows]) => {
-                        const isOpen    = !collapsed[key];
-                        const total     = rows.reduce((sum, t) => sum + (t.type === 'Credit' ? t.amount : -t.amount), 0);
-                        const isSalary  = key.startsWith('👤');
-                        const accentClr = isSalary ? '#7030A0' : '#2E75B6';
-                        return [
-                          // ── Group header row ──
-                          <tr key={`hdr-${key}`}
-                            onClick={() => toggle(key)}
-                            style={{ background: accentClr, cursor: 'pointer', userSelect: 'none' }}>
-                            <td colSpan={4} style={{ padding: '10px 14px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
-                              <span style={{ marginRight: 10, fontSize: 16 }}>{isOpen ? '▼' : '▶'}</span>
-                              {key}
-                              <span style={{ marginLeft: 12, background: 'rgba(255,255,255,0.2)', borderRadius: 12, padding: '2px 10px', fontSize: 12 }}>
-                                {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
-                              </span>
-                            </td>
-                            <td colSpan={3} style={{ padding: '10px 14px', color: '#fff', fontWeight: 700, fontSize: 14, textAlign: 'right' }}>
-                              <span style={{ marginRight: 16, opacity: 0.8, fontSize: 12 }}>Total:</span>
-                              <span style={{ color: total >= 0 ? '#90EE90' : '#FFB3B3' }}>{total >= 0 ? '+' : ''}{fmt(total)}</span>
-                            </td>
-                          </tr>,
-                          // ── Rows ──
-                          ...(isOpen ? rows.map((t, i) => (
-                            <tr key={t.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafd' }}>
-                              <td style={{ ...s.td, paddingLeft: 32 }}>{new Date(t.date).toLocaleDateString()}</td>
-                              <td style={s.td}>{t.accountName}</td>
-                              <td style={s.td}>{t.description}</td>
-                              <td style={s.td}>{t.referenceNo || '—'}</td>
-                              <td style={s.td}><span style={t.type === 'Credit' ? s.credit : s.debit}>{t.type}</span></td>
-                              <td style={{ ...s.td, fontWeight: 700, color: t.type === 'Credit' ? '#70AD47' : '#BE0000' }}>{fmt(t.amount)}</td>
-                              <td style={s.td}><button style={s.delBtn} onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: t.id, name: t.description }); }}>Del</button></td>
-                            </tr>
-                          )) : [])
-                        ];
-                      })
-                    : filteredTx.map((t, i) => (
-                        <tr key={t.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafd' }}>
-                          <td style={s.td}>{new Date(t.date).toLocaleDateString()}</td>
-                          <td style={s.td}>{t.accountName}</td>
-                          <td style={s.td}>{t.description}</td>
-                          <td style={s.td}>{t.referenceNo || '—'}</td>
-                          <td style={s.td}><span style={t.type === 'Credit' ? s.credit : s.debit}>{t.type}</span></td>
-                          <td style={{ ...s.td, fontWeight: 700, color: t.type === 'Credit' ? '#70AD47' : '#BE0000' }}>{fmt(t.amount)}</td>
-                          <td style={s.td}><button style={s.delBtn} onClick={() => setDeleteConfirm({ id: t.id, name: t.description })}>Del</button></td>
-                        </tr>
-                      ))
-                  }
+                    return (
+                      <tr key={a.id} style={styles.tr(isDark, i % 2 === 0)}>
+                        <td style={styles.td(isDark)}>{i + 1}</td>
+                        <td style={styles.td(isDark)}><strong>{a.name}</strong></td>
+                        <td style={styles.td(isDark)}>
+                          <span style={styles.catPill(catStyle.bg, catStyle.color, catStyle.border)}>
+                            {a.categoryName}
+                          </span>
+                        </td>
+                        <td style={styles.td(isDark)}>{a.description || '—'}</td>
+                        <td style={{ ...styles.td(isDark), fontWeight: 800, color: balColor, fontSize: 14 }}>
+                          {fmt(dispBal)}
+                        </td>
+                        <td style={styles.td(isDark)}>
+                          <span style={a.isActive ? styles.activeBadge : styles.inactiveBadge}>
+                            {a.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td style={styles.td(isDark)}>
+                          <button
+                            style={styles.editBtn}
+                            onClick={() => {
+                              setEditAcc(a);
+                              setAccForm({ name: a.name, categoryId: a.categoryId, openingBalance: a.balance, description: a.description || '' });
+                              setShowAccForm(true);
+                            }}
+                          >
+                            ✏️ Edit
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {accounts.length === 0 && (
+                    <tr><td colSpan={7} style={styles.empty(isDark)}>No accounts created yet.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
-          );
-        })()}
-
-        {/* ── LEDGER ── */}
-        {tab === 'Ledger' && (
-          <div style={s.card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div style={s.cardTitle}>Ledger View</div>
-              <select style={s.filterSelect} value={filterAcc} onChange={e => setFilterAcc(e.target.value)}>
-                <option value="">-- Select Account --</option>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-            <table style={s.table}>
-              <thead><tr>{['Date', 'Description', 'Ref No', 'Debit', 'Credit', 'Balance'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
-              <tbody>
-                {filteredTx.length === 0 && <tr><td colSpan={6} style={s.empty}>Select an account to view ledger</td></tr>}
-                {(() => {
-                  let bal = 0;
-                  return filteredTx.map((t, i) => {
-                    bal += t.type === 'Credit' ? t.amount : -t.amount;
-                    return (
-                      <tr key={t.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafd' }}>
-                        <td style={s.td}>{new Date(t.date).toLocaleDateString()}</td>
-                        <td style={s.td}>{t.description}</td>
-                        <td style={s.td}>{t.referenceNo || '—'}</td>
-                        <td style={{ ...s.td, color: '#BE0000', fontWeight: 600 }}>{t.type === 'Debit'  ? fmt(t.amount) : '—'}</td>
-                        <td style={{ ...s.td, color: '#70AD47', fontWeight: 600 }}>{t.type === 'Credit' ? fmt(t.amount) : '—'}</td>
-                        <td style={{ ...s.td, fontWeight: 700, color: bal >= 0 ? '#2E75B6' : '#BE0000' }}>{fmt(Math.abs(bal))}</td>
-                      </tr>
-                    );
-                  });
-                })()}
-              </tbody>
-            </table>
           </div>
         )}
-      </div>
 
-      {/* ── Add Account Modal ── */}
-      {showAccForm && (
-        <div style={s.overlay}>
-          <div style={s.modal}>
-            <div style={s.modalHeader}>
-              <span style={s.modalTitle}>{editAcc ? 'Edit Account' : 'New Account'}</span>
-              <button style={s.closeBtn} onClick={() => setShowAccForm(false)}>✕</button>
-            </div>
-            <div style={s.modalBody}>
-              <div style={s.formGrid}>
-                <div style={s.fg}><label style={s.label}>Account Name *</label><input style={s.input} placeholder="e.g. Main Cash" value={accForm.name} onChange={e => setAccForm({ ...accForm, name: e.target.value })} /></div>
-                <div style={s.fg}><label style={s.label}>Category *</label>
-                  <select style={s.input} value={accForm.categoryId} onChange={e => setAccForm({ ...accForm, categoryId: e.target.value })}>
-                    <option value="">-- Select --</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
-                  </select>
-                </div>
-                {!editAcc && <div style={s.fg}><label style={s.label}>Opening Balance (PKR)</label><input type="number" style={s.input} placeholder="0" value={accForm.openingBalance} onChange={e => setAccForm({ ...accForm, openingBalance: e.target.value })} /></div>}
-                <div style={s.fg}><label style={s.label}>Description</label><input style={s.input} placeholder="Optional" value={accForm.description} onChange={e => setAccForm({ ...accForm, description: e.target.value })} /></div>
+        {/* ── 3. TRANSACTIONS TAB ─────────────────────────────────────── */}
+        {tab === 'Transactions' && (
+          <div style={styles.cardBox(isDark)}>
+            <div style={styles.cardHeader(isDark)}>
+              <span style={{ fontWeight: 800, fontSize: 13, textTransform: 'uppercase' }}>
+                All Transactions ({transactions.length})
+              </span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select
+                  style={styles.select(isDark)}
+                  value={filterAcc}
+                  onChange={e => setFilterAcc(e.target.value)}
+                >
+                  <option value="">All Accounts</option>
+                  {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+                <select
+                  style={styles.select(isDark)}
+                  value={filterCat}
+                  onChange={e => setFilterCat(e.target.value)}
+                >
+                  <option value="">All Categories</option>
+                  {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
               </div>
             </div>
-            <div style={s.modalFooter}>
-              <button style={s.cancelBtn} onClick={() => setShowAccForm(false)}>Cancel</button>
-              <button style={s.saveBtn} onClick={saveAccount} disabled={saving}>{saving ? 'Saving...' : editAcc ? 'Update' : 'Save'}</button>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    {['Date', 'Account', 'Description', 'Ref No', 'Type', 'Amount', 'Action'].map(h => (
+                      <th key={h} style={styles.th(isDark)}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions
+                    .filter(t => !filterAcc || t.accountId === Number(filterAcc))
+                    .map((t, i) => (
+                      <tr key={t.id} style={styles.tr(isDark, i % 2 === 0)}>
+                        <td style={styles.td(isDark)}>📅 {new Date(t.date).toLocaleDateString('en-PK')}</td>
+                        <td style={styles.td(isDark)}><strong>{t.accountName}</strong></td>
+                        <td style={styles.td(isDark)}>{t.description}</td>
+                        <td style={styles.td(isDark)}><span style={styles.refBadge}>{t.referenceNo || '—'}</span></td>
+                        <td style={styles.td(isDark)}>
+                          <span style={t.type === 'Credit' ? styles.creditBadge : styles.debitBadge}>
+                            {t.type}
+                          </span>
+                        </td>
+                        <td style={{ ...styles.td(isDark), fontWeight: 800, color: t.type === 'Credit' ? '#198754' : '#dc3545', fontSize: 14 }}>
+                          {fmt(t.amount)}
+                        </td>
+                        <td style={styles.td(isDark)}>
+                          <button
+                            style={styles.delBtn}
+                            onClick={() => setDeleteConfirm({ id: t.id, name: t.description })}
+                          >
+                            🗑️
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── 4. LEDGER TAB ───────────────────────────────────────────── */}
+        {tab === 'Ledger' && (
+          <div style={styles.cardBox(isDark)}>
+            <div style={styles.cardHeader(isDark)}>
+              <span style={{ fontWeight: 800, fontSize: 13, textTransform: 'uppercase' }}>
+                📑 General Ledger Account View
+              </span>
+              <button
+                style={styles.btnSecondarySm}
+                onClick={() => setGroupedView(v => !v)}
+              >
+                {groupedView ? 'Flat Table' : 'Grouped by Account'}
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 20px' }}>
+              {accounts.map(acc => {
+                const accTxs = transactions.filter(t => t.accountId === acc.id);
+                if (accTxs.length === 0) return null;
+                const isCollapsed = collapsed[acc.id];
+
+                return (
+                  <div key={acc.id} style={styles.ledgerAccCard(isDark)}>
+                    <div
+                      style={styles.ledgerHeader(isDark)}
+                      onClick={() => setCollapsed(c => ({ ...c, [acc.id]: !c[acc.id] }))}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>{isCollapsed ? '▶' : '▼'}</span>
+                        <strong style={{ fontSize: 15 }}>{acc.name}</strong>
+                        <span style={styles.countBadge}>{accTxs.length} entries</span>
+                      </div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: acc.balance >= 0 ? '#198754' : '#dc3545' }}>
+                        Balance: {fmt(acc.balance)}
+                      </div>
+                    </div>
+
+                    {!isCollapsed && (
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={styles.table}>
+                          <thead>
+                            <tr>
+                              {['Date', 'Description', 'Ref No', 'Type', 'Amount'].map(h => (
+                                <th key={h} style={styles.th(isDark)}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {accTxs.map((t, idx) => (
+                              <tr key={t.id} style={styles.tr(isDark, idx % 2 === 0)}>
+                                <td style={styles.td(isDark)}>{new Date(t.date).toLocaleDateString('en-PK')}</td>
+                                <td style={styles.td(isDark)}>{t.description}</td>
+                                <td style={styles.td(isDark)}>{t.referenceNo || '—'}</td>
+                                <td style={styles.td(isDark)}>
+                                  <span style={t.type === 'Credit' ? styles.creditBadge : styles.debitBadge}>
+                                    {t.type}
+                                  </span>
+                                </td>
+                                <td style={{ ...styles.td(isDark), fontWeight: 700, color: t.type === 'Credit' ? '#198754' : '#dc3545' }}>
+                                  {fmt(t.amount)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* ── Add / Edit Account Modal ── */}
+      {showAccForm && (
+        <div style={styles.overlay}>
+          <div style={styles.modal(isDark)}>
+            <div style={styles.modalHeader('#0d6efd')}>
+              <span style={styles.modalTitle}>{editAcc ? 'Edit Financial Account' : 'Create New Account'}</span>
+              <button style={styles.closeBtn} onClick={() => setShowAccForm(false)}>✕</button>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={styles.formGrid}>
+                <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                  <label style={styles.label(isDark)}>Account Name *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    placeholder="e.g. Bank Alfalah or Stitching Expense"
+                    value={accForm.name}
+                    onChange={e => setAccForm({ ...accForm, name: e.target.value })}
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label(isDark)}>Category *</label>
+                  <select
+                    style={styles.select(isDark)}
+                    value={accForm.categoryId}
+                    onChange={e => setAccForm({ ...accForm, categoryId: e.target.value })}
+                  >
+                    <option value="">— Select Category —</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                {!editAcc && (
+                  <div style={styles.formGroup}>
+                    <label style={styles.label(isDark)}>Opening Balance (PKR)</label>
+                    <input
+                      style={styles.input(isDark)}
+                      type="number"
+                      placeholder="0"
+                      value={accForm.openingBalance}
+                      onChange={e => setAccForm({ ...accForm, openingBalance: e.target.value })}
+                    />
+                  </div>
+                )}
+                <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                  <label style={styles.label(isDark)}>Description</label>
+                  <input
+                    style={styles.input(isDark)}
+                    placeholder="Account purpose or bank details..."
+                    value={accForm.description}
+                    onChange={e => setAccForm({ ...accForm, description: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+            <div style={styles.modalFooter(isDark)}>
+              <button style={styles.cancelBtn(isDark)} onClick={() => setShowAccForm(false)}>Cancel</button>
+              <button style={styles.btnPrimary} onClick={saveAccount} disabled={saving}>
+                {saving ? 'Saving…' : editAcc ? 'Update Account' : 'Save Account'}
+              </button>
             </div>
           </div>
         </div>
@@ -430,54 +682,102 @@ export default function AccountsModule() {
 
       {/* ── Add Transaction Modal ── */}
       {showTxForm && (
-        <div style={s.overlay}>
-          <div style={s.modal}>
-            <div style={s.modalHeader}>
-              <span style={s.modalTitle}>Add Transaction</span>
-              <button style={s.closeBtn} onClick={() => setShowTxForm(false)}>✕</button>
+        <div style={styles.overlay}>
+          <div style={styles.modal(isDark)}>
+            <div style={styles.modalHeader('#198754')}>
+              <span style={styles.modalTitle}>Record Financial Transaction</span>
+              <button style={styles.closeBtn} onClick={() => setShowTxForm(false)}>✕</button>
             </div>
-            <div style={s.modalBody}>
-              <div style={s.formGrid}>
-                <div style={s.fg}><label style={s.label}>Account *</label>
-                  <select style={s.input} value={txForm.accountId} onChange={e => setTxForm({ ...txForm, accountId: e.target.value })}>
-                    <option value="">-- Select Account --</option>
-                    {accounts.filter(a => a.isActive).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            <div style={styles.modalBody}>
+              <div style={styles.formGrid}>
+                <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                  <label style={styles.label(isDark)}>Account *</label>
+                  <select
+                    style={styles.select(isDark)}
+                    value={txForm.accountId}
+                    onChange={e => setTxForm({ ...txForm, accountId: e.target.value })}
+                  >
+                    <option value="">— Select Account —</option>
+                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name} ({a.categoryName})</option>)}
                   </select>
                 </div>
-                <div style={s.fg}><label style={s.label}>Type *</label>
-                  <select style={s.input} value={txForm.type} onChange={e => setTxForm({ ...txForm, type: e.target.value })}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label(isDark)}>Transaction Type *</label>
+                  <select
+                    style={styles.select(isDark)}
+                    value={txForm.type}
+                    onChange={e => setTxForm({ ...txForm, type: e.target.value })}
+                  >
                     <option value="Credit">Credit (Money In ↑)</option>
                     <option value="Debit">Debit (Money Out ↓)</option>
                   </select>
                 </div>
-                <div style={s.fg}><label style={s.label}>Amount (PKR) *</label><input type="number" style={s.input} placeholder="0" value={txForm.amount} onChange={e => setTxForm({ ...txForm, amount: e.target.value })} /></div>
-                <div style={s.fg}><label style={s.label}>Reference No</label><input style={s.input} placeholder="e.g. REF001" value={txForm.referenceNo} onChange={e => setTxForm({ ...txForm, referenceNo: e.target.value })} /></div>
-                <div style={s.fg}><label style={s.label}>Date *</label><input type="date" style={s.input} value={txForm.date} onChange={e => setTxForm({ ...txForm, date: e.target.value })} /></div>
-                <div style={s.fg}><label style={s.label}>Description *</label><input style={s.input} placeholder="Details..." value={txForm.description} onChange={e => setTxForm({ ...txForm, description: e.target.value })} /></div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label(isDark)}>Amount (PKR) *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    type="number"
+                    placeholder="0"
+                    value={txForm.amount}
+                    onChange={e => setTxForm({ ...txForm, amount: e.target.value })}
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label(isDark)}>Reference No</label>
+                  <input
+                    style={styles.input(isDark)}
+                    placeholder="e.g. CHQ-1049 or REF001"
+                    value={txForm.referenceNo}
+                    onChange={e => setTxForm({ ...txForm, referenceNo: e.target.value })}
+                  />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label(isDark)}>Transaction Date *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    type="date"
+                    value={txForm.date}
+                    onChange={e => setTxForm({ ...txForm, date: e.target.value })}
+                  />
+                </div>
+                <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
+                  <label style={styles.label(isDark)}>Description *</label>
+                  <input
+                    style={styles.input(isDark)}
+                    placeholder="Details about this payment or deposit..."
+                    value={txForm.description}
+                    onChange={e => setTxForm({ ...txForm, description: e.target.value })}
+                  />
+                </div>
               </div>
             </div>
-            <div style={s.modalFooter}>
-              <button style={s.cancelBtn} onClick={() => setShowTxForm(false)}>Cancel</button>
-              <button style={s.saveBtn} onClick={saveTx} disabled={saving}>{saving ? 'Saving...' : 'Save Transaction'}</button>
+            <div style={styles.modalFooter(isDark)}>
+              <button style={styles.cancelBtn(isDark)} onClick={() => setShowTxForm(false)}>Cancel</button>
+              <button style={styles.btnSuccess} onClick={saveTx} disabled={saving}>
+                {saving ? 'Saving…' : 'Record Transaction'}
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirm */}
+      {/* ── Delete Confirm Modal ── */}
       {deleteConfirm && (
-        <div style={s.overlay}>
-          <div style={{ ...s.modal, maxWidth: 400 }}>
-            <div style={{ ...s.modalHeader, background: '#BE0000' }}>
-              <span style={s.modalTitle}>Confirm Delete</span>
-              <button style={s.closeBtn} onClick={() => setDeleteConfirm(null)}>✕</button>
+        <div style={styles.overlay}>
+          <div style={{ ...styles.modal(isDark), maxWidth: 420 }}>
+            <div style={styles.modalHeader('#dc3545')}>
+              <span style={styles.modalTitle}>Confirm Delete</span>
+              <button style={styles.closeBtn} onClick={() => setDeleteConfirm(null)}>✕</button>
             </div>
-            <div style={{ padding: '1.5rem', fontSize: 15, color: '#444' }}>
-              Delete transaction: <b>{deleteConfirm.name}</b>? This will reverse the balance.
+            <div style={{ padding: '1.4rem', fontSize: 14, color: isDark ? 'var(--text-main)' : '#212529', lineHeight: 1.5 }}>
+              Are you sure you want to delete transaction <b>{deleteConfirm.name}</b>?
+              <div style={{ fontSize: 12, color: '#dc3545', marginTop: 8 }}>
+                This will reverse the associated account balance.
+              </div>
             </div>
-            <div style={s.modalFooter}>
-              <button style={s.cancelBtn} onClick={() => setDeleteConfirm(null)}>Cancel</button>
-              <button style={{ ...s.saveBtn, background: '#BE0000' }} onClick={() => handleDeleteTx(deleteConfirm.id)}>Yes, Delete</button>
+            <div style={styles.modalFooter(isDark)}>
+              <button style={styles.cancelBtn(isDark)} onClick={() => setDeleteConfirm(null)}>Cancel</button>
+              <button style={styles.btnDanger} onClick={() => handleDeleteTx(deleteConfirm.id)}>Yes, Delete</button>
             </div>
           </div>
         </div>
@@ -486,48 +786,502 @@ export default function AccountsModule() {
   );
 }
 
-const s = {
-  page:        { fontFamily: "'Segoe UI', Arial, sans-serif", background: '#F4F6F9', minHeight: '100vh' },
-  loading:     { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', fontSize: 18, color: '#888' },
-  header:      { background: '#1e2a3b', padding: '1.2rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  headerLabel: { color: '#7a9cc0', fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 2 },
-  headerTitle: { color: '#fff', fontSize: '1.4rem', fontWeight: 600 },
-  btn:         (bg) => ({ background: bg, color: '#fff', border: 'none', borderRadius: 8, padding: '9px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }),
-  errorBar:    { background: '#FBEAEA', color: '#BE0000', padding: '10px 2rem', display: 'flex', justifyContent: 'space-between', fontSize: 13, borderBottom: '1px solid #f5c6c6' },
-  errClose:    { background: 'none', border: 'none', color: '#BE0000', cursor: 'pointer', fontSize: 16 },
-  tabRow:      { background: '#fff', borderBottom: '2px solid #eef1f6', display: 'flex', padding: '0 2rem' },
-  tabBtn:      { padding: '12px 20px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, color: '#777', borderBottom: '2px solid transparent', marginBottom: -2 },
-  tabActive:   { color: '#2E75B6', borderBottom: '2px solid #2E75B6', fontWeight: 600 },
-  body:        { padding: '1.5rem 2rem' },
-  statsRow:    { display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' },
-  statCard:    { borderRadius: 10, padding: '1rem 1.5rem', flex: 1, minWidth: 160, background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: 4 },
-  statNum:     { fontSize: '1.2rem', fontWeight: 700 },
-  statLabel:   { fontSize: 12, color: '#777' },
-  card:        { background: '#fff', borderRadius: 10, padding: '1.2rem', marginBottom: 20, boxShadow: '0 2px 10px rgba(0,0,0,0.06)' },
-  cardTitle:   { fontWeight: 600, fontSize: 15, color: '#1e2a3b', marginBottom: 12 },
-  table:       { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
-  th:          { background: '#2E75B6', color: '#fff', padding: '10px 14px', textAlign: 'left', fontWeight: 500 },
-  td:          { padding: '10px 14px', borderBottom: '1px solid #eef1f6', verticalAlign: 'middle' },
-  empty:       { textAlign: 'center', padding: '2rem', color: '#aaa' },
-  pill:        { borderRadius: 4, padding: '3px 10px', fontSize: 12, fontWeight: 600 },
-  active:      { background: '#EEF6E6', color: '#4a8a1e', borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600 },
-  inactive:    { background: '#FBEAEA', color: '#BE0000', borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 600 },
-  credit:      { background: '#EEF6E6', color: '#4a8a1e', borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 600 },
-  debit:       { background: '#FBEAEA', color: '#BE0000', borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 600 },
-  filterSelect:{ padding: '7px 12px', borderRadius: 6, border: '1px solid #dde3ec', fontSize: 13 },
-  editBtn:     { background: '#70AD47', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 12 },
-  delBtn:      { background: '#BE0000', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontSize: 12 },
-  overlay:     { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modal:       { background: '#fff', borderRadius: 12, width: '90%', maxWidth: 600, boxShadow: '0 8px 40px rgba(0,0,0,0.18)' },
-  modalHeader: { background: '#1e2a3b', borderRadius: '12px 12px 0 0', padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  modalTitle:  { color: '#fff', fontWeight: 600, fontSize: 16 },
-  closeBtn:    { background: 'none', border: 'none', color: '#fff', fontSize: 18, cursor: 'pointer' },
-  modalBody:   { padding: '1.5rem' },
-  formGrid:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
-  fg:          { display: 'flex', flexDirection: 'column', gap: 4 },
-  label:       { fontSize: 12, fontWeight: 600, color: '#555' },
-  input:       { padding: '9px 12px', borderRadius: 6, border: '1px solid #cdd5e0', fontSize: 14, outline: 'none' },
-  modalFooter: { padding: '1rem 1.5rem', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: 10 },
-  cancelBtn:   { background: '#f0f2f5', color: '#555', border: 'none', borderRadius: 6, padding: '9px 20px', cursor: 'pointer', fontSize: 14 },
-  saveBtn:     { background: '#2E75B6', color: '#fff', border: 'none', borderRadius: 6, padding: '9px 22px', cursor: 'pointer', fontSize: 14, fontWeight: 600 },
+// ── Bootstrap KPI Card Sub-Component ──
+function BtKpiCard({ label, tag, value, gradient, glow, icon, hint, onClick }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      title={hint}
+      style={{
+        background: gradient,
+        borderRadius: 14,
+        padding: '16px 18px',
+        color: '#ffffff',
+        boxShadow: hov ? `0 10px 26px ${glow}` : `0 6px 18px ${glow}`,
+        border: '1px solid rgba(255, 255, 255, 0.18)',
+        cursor: 'pointer',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        minHeight: 110,
+        position: 'relative',
+        overflow: 'hidden',
+        transition: 'transform 0.16s ease, box-shadow 0.16s ease',
+        transform: hov ? 'translateY(-3px)' : 'none',
+      }}
+    >
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: '40%',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 100%)',
+        pointerEvents: 'none'
+      }} />
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, position: 'relative', zIndex: 1 }}>
+          <span style={{
+            fontSize: '0.675rem', fontWeight: 800, letterSpacing: '0.05em',
+            padding: '2px 8px', borderRadius: 8,
+            background: 'rgba(255, 255, 255, 0.22)', backdropFilter: 'blur(4px)',
+            color: '#ffffff', textTransform: 'uppercase'
+          }}>
+            {tag || label}
+          </span>
+          <span style={{ fontSize: '1.25rem', opacity: 0.9 }}>{icon}</span>
+        </div>
+
+        <div style={{ fontSize: 21, fontWeight: 800, color: '#ffffff', lineHeight: 1.15, textShadow: '0 1px 3px rgba(0,0,0,0.25)', position: 'relative', zIndex: 1 }}>
+          {value}
+        </div>
+      </div>
+
+      <div style={{
+        fontSize: '0.75rem', color: 'rgba(255, 255, 255, 0.9)', fontWeight: 600,
+        marginTop: 10, paddingTop: 6, borderTop: '1px solid rgba(255, 255, 255, 0.18)',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        position: 'relative', zIndex: 1
+      }}>
+        <span>{label}</span>
+        <span style={{ fontSize: 11, opacity: 0.8 }}>View →</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Styles (Bootstrap 5 Professional Theme) ──
+const styles = {
+  page: (isDark) => ({
+    padding: '1.1rem 1.4rem',
+    minHeight: '100vh',
+    boxSizing: 'border-box',
+    width: '100%',
+  }),
+  header: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: '0.85rem',
+    marginBottom: '1rem',
+    padding: '1rem 1.4rem',
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    boxShadow: '0 .125rem .25rem rgba(0,0,0,.04)',
+  }),
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.85rem',
+  },
+  headerIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    background: '#e7f1ff',
+    color: '#0d6efd',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '1.4rem',
+  },
+  headerBreadcrumb: {
+    fontSize: '0.725rem',
+    fontWeight: 800,
+    color: '#6c757d',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+  },
+  headerTitle: (isDark) => ({
+    fontSize: '1.4rem',
+    fontWeight: 800,
+    color: isDark ? 'var(--text-main)' : '#212529',
+    margin: '2px 0 0 0',
+    letterSpacing: '-0.02em',
+  }),
+  errorAlert: {
+    background: '#f8d7da',
+    color: '#842029',
+    border: '1px solid #f5c2c7',
+    padding: '10px 16px',
+    borderRadius: 10,
+    fontSize: 13,
+    marginBottom: '1rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  alertCloseBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#842029',
+    cursor: 'pointer',
+    fontSize: 14,
+    fontWeight: 700,
+  },
+
+  // ── Nav Pills ──
+  tabBar: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.45rem',
+    flexWrap: 'wrap',
+    marginBottom: '1rem',
+  }),
+  tabBtn: (isActive, isDark) => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '7px 16px',
+    borderRadius: 20,
+    border: isActive ? '1px solid #0d6efd' : `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    background: isActive ? '#0d6efd' : (isDark ? 'var(--bg-card)' : '#ffffff'),
+    color: isActive ? '#ffffff' : (isDark ? 'var(--text-main)' : '#495057'),
+    fontSize: '0.825rem',
+    fontWeight: isActive ? 700 : 600,
+    cursor: 'pointer',
+    boxShadow: isActive ? '0 4px 12px rgba(13, 110, 253, 0.35)' : 'none',
+    transition: 'all .15s ease',
+  }),
+
+  content: {},
+
+  // ── KPI Grid ──
+  kpiGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: 12,
+    marginBottom: 16,
+  },
+
+  // ── Card Containers ──
+  cardBox: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    boxShadow: '0 .125rem .25rem rgba(0,0,0,.04)',
+    overflow: 'hidden',
+    marginBottom: 16,
+  }),
+  cardHeader: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '12px 18px',
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    color: isDark ? 'var(--text-main)' : '#212529',
+  }),
+  countBadge: {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: '3px 8px',
+    borderRadius: 12,
+    background: '#e7f1ff',
+    color: '#0d6efd',
+  },
+
+  // ── Buttons ──
+  btnPrimary: {
+    background: '#0d6efd',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(13, 110, 253, 0.28)',
+  },
+  btnSuccess: {
+    background: '#198754',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(25, 135, 84, 0.28)',
+  },
+  btnDanger: {
+    background: '#dc3545',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+  btnOutlinePrimary: {
+    background: '#e7f1ff',
+    color: '#0d6efd',
+    border: '1px solid #cff4fc',
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+  btnSecondarySm: {
+    background: '#6c757d',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  editBtn: {
+    background: '#e7f1ff',
+    color: '#0d6efd',
+    border: '1px solid #b6d4fe',
+    borderRadius: 6,
+    padding: '4px 10px',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+  delBtn: {
+    background: '#f8d7da',
+    color: '#dc3545',
+    border: '1px solid #f5c2c7',
+    borderRadius: 6,
+    padding: '4px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+  },
+
+  // ── Tables ──
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: 13,
+    textAlign: 'left',
+  },
+  th: (isDark) => ({
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    padding: '10px 16px',
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+  }),
+  tr: (isDark, isEven) => ({
+    background: isEven
+      ? (isDark ? 'var(--bg-card)' : '#ffffff')
+      : (isDark ? 'rgba(255,255,255,0.015)' : '#fafbfc'),
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#f1f5f9'}`,
+  }),
+  td: (isDark) => ({
+    padding: '11px 16px',
+    color: isDark ? 'var(--text-main)' : '#212529',
+    verticalAlign: 'middle',
+  }),
+  empty: (isDark) => ({
+    padding: '36px',
+    textAlign: 'center',
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+    fontSize: 14,
+  }),
+
+  // ── Badges ──
+  catPill: (bg, color, border) => ({
+    background: bg,
+    color: color,
+    border: `1px solid ${border}`,
+    borderRadius: 6,
+    padding: '2px 8px',
+    fontSize: 11,
+    fontWeight: 700,
+  }),
+  activeBadge: {
+    background: '#d1e7dd',
+    color: '#0f5132',
+    border: '1px solid #badbcc',
+    borderRadius: 12,
+    padding: '3px 10px',
+    fontSize: 11,
+    fontWeight: 700,
+  },
+  inactiveBadge: {
+    background: '#f8d7da',
+    color: '#842029',
+    border: '1px solid #f5c2c7',
+    borderRadius: 12,
+    padding: '3px 10px',
+    fontSize: 11,
+    fontWeight: 700,
+  },
+  creditBadge: {
+    background: '#d1e7dd',
+    color: '#0f5132',
+    border: '1px solid #badbcc',
+    borderRadius: 6,
+    padding: '2px 8px',
+    fontSize: 11,
+    fontWeight: 700,
+  },
+  debitBadge: {
+    background: '#f8d7da',
+    color: '#842029',
+    border: '1px solid #f5c2c7',
+    borderRadius: 6,
+    padding: '2px 8px',
+    fontSize: 11,
+    fontWeight: 700,
+  },
+  refBadge: {
+    background: '#f8f9fa',
+    border: '1px solid #ced4da',
+    borderRadius: 4,
+    padding: '1px 6px',
+    fontSize: 11,
+    color: '#495057',
+    fontWeight: 600,
+  },
+
+  // ── Form Inputs ──
+  select: (isDark) => ({
+    padding: '7px 12px',
+    borderRadius: 8,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+    background: isDark ? 'var(--bg-subtle)' : '#ffffff',
+    color: isDark ? 'var(--text-main)' : '#212529',
+    fontSize: 13,
+    outline: 'none',
+  }),
+  input: (isDark) => ({
+    padding: '8px 12px',
+    borderRadius: 8,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+    background: isDark ? 'var(--bg-subtle)' : '#ffffff',
+    color: isDark ? 'var(--text-main)' : '#212529',
+    fontSize: 13,
+    outline: 'none',
+    width: '100%',
+    boxSizing: 'border-box',
+  }),
+  formGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 14,
+  },
+  formGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  label: (isDark) => ({
+    fontSize: 12,
+    fontWeight: 700,
+    color: isDark ? 'var(--text-muted)' : '#495057',
+  }),
+
+  // ── Ledger Specific ──
+  ledgerAccCard: (isDark) => ({
+    marginBottom: 14,
+    borderRadius: 10,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    overflow: 'hidden',
+  }),
+  ledgerHeader: (isDark) => ({
+    padding: '12px 16px',
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+    cursor: 'pointer',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+  }),
+
+  // ── Modals ──
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(15, 23, 42, 0.65)',
+    backdropFilter: 'blur(3px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+    padding: '1rem',
+  },
+  modal: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 560,
+    boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
+    overflow: 'hidden',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+  }),
+  modalHeader: (color) => ({
+    background: `linear-gradient(135deg, ${color} 0%, #1e293b 100%)`,
+    padding: '1.1rem 1.4rem',
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  }),
+  modalTitle: {
+    fontSize: '1.1rem',
+    fontWeight: 800,
+    margin: 0,
+  },
+  closeBtn: {
+    background: 'rgba(255,255,255,0.2)',
+    border: 'none',
+    color: '#ffffff',
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 14,
+    cursor: 'pointer',
+  },
+  modalBody: {
+    padding: '1.4rem',
+  },
+  modalFooter: (isDark) => ({
+    padding: '1rem 1.4rem',
+    borderTop: `1px solid ${isDark ? 'var(--border-color)' : '#dee2e6'}`,
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 10,
+    background: isDark ? 'var(--bg-subtle)' : '#f8f9fa',
+  }),
+  cancelBtn: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#ced4da'}`,
+    color: isDark ? 'var(--text-main)' : '#495057',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  }),
+  loadingBox: (isDark) => ({
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '60vh',
+    color: isDark ? 'var(--text-muted)' : '#6c757d',
+  }),
+  spinner: {
+    width: 32,
+    height: 32,
+    border: '3px solid #dee2e6',
+    borderTopColor: '#0d6efd',
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+  },
 };

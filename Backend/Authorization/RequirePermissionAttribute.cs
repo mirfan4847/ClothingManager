@@ -26,7 +26,7 @@ public class PermissionFilter : IAuthorizationFilter
             context.Result = new UnauthorizedObjectResult(new { message = "Authentication required" });
             return;
         }
-        if (!user.HasClaim("perm:" + _permission, "true"))
+        if (!user.IsInRole("Admin") && !user.HasClaim("perm:" + _permission, "true"))
         {
             context.Result = new ObjectResult(new { message = $"Permission denied: {_permission}" }) { StatusCode = 403 };
         }

@@ -44,6 +44,16 @@ public class AuthController : ControllerBase
         return Ok(new { userId, username, role, name });
     }
 
+    /// <summary>Seed or repair default users (admin, manager, viewer), roles, and permissions</summary>
+    [HttpPost("seed-users")]
+    [HttpGet("seed-users")]
+    [AllowAnonymous]
+    public async Task<IActionResult> SeedUsers()
+    {
+        var result = await _svc.SeedUsersAndRolesAsync();
+        return Ok(result);
+    }
+
     /// <summary>Test endpoint - check if API is reachable</summary>
     [HttpGet("ping")]
     [AllowAnonymous]

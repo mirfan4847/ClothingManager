@@ -30,6 +30,30 @@ public class WorkerEntryService
             .ToListAsync();
     }
 
+    public async Task<List<WorkerEntryDto>> GetByLotAsync(int? lotId, string? lotNumber)
+    {
+        var q = _db.WorkerEntries
+            .Include(e => e.Worker)
+            .Include(e => e.Lot)
+            .Include(e => e.Size)
+            .Include(e => e.Color)
+            .Include(e => e.Machine)
+            .AsQueryable();
+
+        if (lotId.HasValue && lotId.Value > 0)
+            q = q.Where(e => e.LotId == lotId.Value);
+        else if (!string.IsNullOrWhiteSpace(lotNumber))
+            q = q.Where(e => e.Lot.LotNumber == lotNumber.Trim());
+        else
+            return new List<WorkerEntryDto>();
+
+        return await q
+            .OrderBy(e => e.WorkerId)
+            .ThenByDescending(e => e.CreatedAt)
+            .Select(e => ToDto(e))
+            .ToListAsync();
+    }
+
     public async Task<WorkerEntryDto?> GetByIdAsync(int id)
     {
         var e = await _db.WorkerEntries
@@ -58,6 +82,59 @@ public class WorkerEntryService
         _db.WorkerEntries.Add(entry);
         await _db.SaveChangesAsync();
         return await GetByIdAsync(entry.Id) ?? throw new Exception("Save failed");
+    }
+
+    public async Task<List<WorkerEntryDto>> BulkCreateAsync(int workerId, List<WorkerEntryCreateDto> dtoList)
+    {
+        var worker = await _db.Workers.FindAsync(workerId);
+        if (worker == null)
+            throw new ArgumentException($"Worker ID {workerId} not found.");
+
+        var createdEntries = new List<WorkerEntry>();
+        foreach (var dto in dtoList)
+        {
+            if (dto.LotId <= 0 || !await _db.Lots.AnyAsync(l => l.Id == dto.LotId))
+                continue;
+
+            var entry = new WorkerEntry
+            {
+                WorkerId = workerId,
+                LotId = dto.LotId,
+                SizeId = dto.SizeId,
+                ColorId = dto.ColorId,
+                MachineId = dto.MachineId,
+                Front = dto.Front,
+                Bazo = dto.Bazo,
+                Tape = dto.Tape,
+                Pocket = dto.Pocket,
+                Gala = dto.Gala,
+                Lable = dto.Lable,
+                Moda = dto.Moda,
+                Quantity = dto.Quantity,
+                TotalPiece = dto.TotalPiece,
+                Completed = dto.Completed,
+                DateCompleted = dto.DateCompleted ?? DateTime.Today
+            };
+            _db.WorkerEntries.Add(entry);
+            createdEntries.Add(entry);
+        }
+
+        if (createdEntries.Count > 0)
+        {
+            await _db.SaveChangesAsync();
+        }
+
+        var ids = createdEntries.Select(e => e.Id).ToList();
+        return await _db.WorkerEntries
+            .Include(e => e.Worker)
+            .Include(e => e.Lot)
+            .Include(e => e.Size)
+            .Include(e => e.Color)
+            .Include(e => e.Machine)
+            .Where(e => ids.Contains(e.Id))
+            .OrderByDescending(e => e.CreatedAt)
+            .Select(e => ToDto(e))
+            .ToListAsync();
     }
 
     public async Task<WorkerEntryDto?> UpdateAsync(int id, WorkerEntryCreateDto dto)

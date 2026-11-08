@@ -96,7 +96,7 @@ public class WageService
         decimal gross = 0;
 
         // Map task column names to their values per entry
-        var taskColumns = new Dictionary<string, Func<WorkerEntry, int?>>
+        var taskColumns = new Dictionary<string, Func<WorkerEntry, int?>>(StringComparer.OrdinalIgnoreCase)
         {
             ["Front"]      = e => e.Front,
             ["Bazo"]       = e => e.Bazo,
@@ -111,7 +111,9 @@ public class WageService
 
         foreach (var rate in rates)
         {
-            if (!taskColumns.TryGetValue(rate.TaskType, out var getter)) continue;
+            Func<WorkerEntry, int?> getter = taskColumns.TryGetValue(rate.TaskType, out var colGetter)
+                ? colGetter
+                : (e => e.TotalPiece ?? e.Quantity);
             int totalPieces = entries.Sum(e => getter(e) ?? 0);
             if (totalPieces == 0) continue;
 
@@ -128,10 +130,11 @@ public class WageService
 
         return new WageCalculationResultDto
         {
-            WorkerId   = workerId,
-            WorkerName = worker.Name,
-            PeriodFrom = from,
-            PeriodTo   = to,
+            WorkerId    = workerId,
+            WorkerName  = worker.Name,
+            WorkerPhone = worker.Phone,
+            PeriodFrom  = from,
+            PeriodTo    = to,
             GrossAmount = gross,
             Breakdown   = breakdown,
         };
@@ -288,6 +291,7 @@ public class WageService
         Id          = a.Id,
         WorkerId    = a.WorkerId,
         WorkerName  = a.Worker?.Name ?? "",
+        WorkerPhone = a.Worker?.Phone ?? "",
         Amount      = a.Amount,
         Notes       = a.Notes,
         AdvanceDate = a.AdvanceDate,
@@ -303,6 +307,7 @@ public class WageService
         Id          = p.Id,
         WorkerId    = p.WorkerId,
         WorkerName  = p.Worker?.Name ?? "",
+        WorkerPhone = p.Worker?.Phone ?? "",
         GrossAmount = p.GrossAmount,
         Deductions  = p.Deductions,
         NetAmount   = p.NetAmount,

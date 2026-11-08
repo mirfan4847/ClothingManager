@@ -1,18 +1,56 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import api from '../services/api';
 
-const ROLES = ['Stitching', 'Machine Op', 'Pressing', 'Finishing', 'Safety', 'Cutting', 'Kajkari', 'Buttons', 'Other'];
-const initForm = { name: '', sheetType: '', role: '', phone: '', status: 'Active', joinDate: '', personType: 'Worker' };
-const avatarColor = (name) => {
-  const colors = ['#C55A11','#2E75B6','#70AD47','#7030A0','#BE0000','#1F7391','#375623','#843C0C','#4472C4'];
-  let h = 0; for (let c of name) h = (h * 31 + c.charCodeAt(0)) % colors.length;
-  return colors[h];
+const initForm = { name: '', role: '', phone: '', status: 'Active', joinDate: '', personType: 'Worker' };
+
+// ── Professional Signature Palettes matching Staff Module ──
+const WORKER_PALETTES = {
+  1: { gradient: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)', color: '#2563eb', bg: '#eff6ff', role: 'Cutting / Cutter',    avatar: 'AH' },
+  2: { gradient: 'linear-gradient(135deg, #064e3b 0%, #059669 100%)', color: '#059669', bg: '#ecfdf5', role: 'Machine / Knitting',  avatar: 'FS' },
+  3: { gradient: 'linear-gradient(135deg, #312e81 0%, #4f46e5 100%)', color: '#4f46e5', bg: '#eef2ff', role: 'Pressing / Iron',     avatar: 'GP' },
+  4: { gradient: 'linear-gradient(135deg, #831843 0%, #e11d48 100%)', color: '#e11d48', bg: '#fff1f2', role: 'Tailor / Stitching',  avatar: 'AR' },
+  5: { gradient: 'linear-gradient(135deg, #4c1d95 0%, #7c3aed 100%)', color: '#7c3aed', bg: '#f5f3ff', role: 'Tailor / Stitching',  avatar: 'NZ' },
+  6: { gradient: 'linear-gradient(135deg, #164e63 0%, #0891b2 100%)', color: '#0891b2', bg: '#ecfeff', role: 'Overlock / Safty',    avatar: 'UM' },
+  7: { gradient: 'linear-gradient(135deg, #064e3b 0%, #0d9488 100%)', color: '#0d9488', bg: '#f0fdfa', role: 'Rafo / Mending',      avatar: 'UR' },
+  8: { gradient: 'linear-gradient(135deg, #7c2d12 0%, #ea580c 100%)', color: '#ea580c', bg: '#fff7ed', role: 'Kaj / Buttonhole',   avatar: 'BK' },
+  9: { gradient: 'linear-gradient(135deg, #1e1b4b 0%, #2563eb 100%)', color: '#2563eb', bg: '#eff6ff', role: 'Button Attaching',   avatar: 'BW' },
+  10:{ gradient: 'linear-gradient(135deg, #134e4a 0%, #0d9488 100%)', color: '#0d9488', bg: '#f0fdfa', role: 'Production Staff',    avatar: 'HI' },
+  11:{ gradient: 'linear-gradient(135deg, #881337 0%, #c026d3 100%)', color: '#c026d3', bg: '#fdf4ff', role: 'Master Cutter',       avatar: 'MR' },
+  12:{ gradient: 'linear-gradient(135deg, #312e81 0%, #7c3aed 100%)', color: '#7c3aed', bg: '#f5f3ff', role: 'Owner / Management',  avatar: 'MH' },
 };
+
+function getWorkerStyle(worker) {
+  const name = (worker?.name || 'Worker').trim();
+  const initials = name.split(/\s+/).map(s => s[0]).join('').slice(0, 2).toUpperCase() || 'WK';
+  if (worker && WORKER_PALETTES[worker.id]) {
+    return {
+      ...WORKER_PALETTES[worker.id],
+      avatar: initials,
+      role: worker.role || WORKER_PALETTES[worker.id].role,
+    };
+  }
+  const colors = [
+    { gradient: 'linear-gradient(135deg, #1e3a8a, #2563eb)', color: '#2563eb', bg: '#eff6ff' },
+    { gradient: 'linear-gradient(135deg, #064e3b, #059669)', color: '#059669', bg: '#ecfdf5' },
+    { gradient: 'linear-gradient(135deg, #312e81, #4f46e5)', color: '#4f46e5', bg: '#eef2ff' },
+    { gradient: 'linear-gradient(135deg, #831843, #e11d48)', color: '#e11d48', bg: '#fff1f2' },
+    { gradient: 'linear-gradient(135deg, #4c1d95, #7c3aed)', color: '#7c3aed', bg: '#f5f3ff' },
+  ];
+  let h = 0;
+  for (let c of name) h = (h * 31 + c.charCodeAt(0)) % colors.length;
+  return { ...colors[h], avatar: initials, role: worker?.role || 'Staff Member' };
+}
 
 export default function LabourModule() {
   const { can } = useAuth();
+  const { isDark, currentColor } = useTheme();
+  const navigate = useNavigate();
+
   const [labours, setLabours]     = useState([]);
+  const [roles, setRoles]         = useState(['Stitching', 'Machine Op', 'Pressing', 'Finishing', 'Safety', 'Cutting', 'Kajkari', 'Buttons', 'Other']);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
   const [filter, setFilter]       = useState('All');
@@ -21,28 +59,34 @@ export default function LabourModule() {
   const [editing, setEditing]     = useState(null);
   const [errors, setErrors]       = useState({});
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [statusConfirm, setStatusConfirm] = useState(null);
   const [saving, setSaving]       = useState(false);
   const [apiError, setApiError]   = useState('');
   const [page,     setPage]       = useState(1);
   const [pageSize, setPageSize]   = useState(10);
 
-  // Load workers from real API
+  // Load workers and configured roles from real API
   const loadWorkers = async () => {
     setLoading(true);
     setApiError('');
     try {
-      const res = await api.get('/workers');
+      const [res, rolesRes] = await Promise.all([
+        api.get('/workers'),
+        api.get('/dropdowns/worker-roles').then(r => r.data).catch(() => []),
+      ]);
       const mapped = res.data.map(w => ({
         id:         w.id,
         name:       w.name,
-        sheetType:  w.sheetType,
-        role:       w.role || 'Worker',
+        role:       w.role || w.sheetType || 'Worker',
         phone:      w.phone || '',
         status:     w.isActive === false ? 'Inactive' : 'Active',
         joinDate:   w.joinDate ? w.joinDate.split('T')[0] : '',
         personType: w.personType || 'Worker',
       }));
       setLabours(mapped);
+      if (Array.isArray(rolesRes) && rolesRes.length > 0) {
+        setRoles(rolesRes.map(r => r.name).filter(Boolean));
+      }
     } catch {
       setApiError('Could not load workers from server.');
     }
@@ -51,12 +95,18 @@ export default function LabourModule() {
 
   useEffect(() => { loadWorkers(); }, []);
 
-  const filtered = labours.filter(l => {
-    const matchSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
-                        l.role.toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === 'All' || l.status === filter;
-    return matchSearch && matchFilter;
-  });
+  const filtered = useMemo(() => {
+    return labours.filter(l => {
+      const matchSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
+                          l.role.toLowerCase().includes(search.toLowerCase());
+      const matchFilter = filter === 'All'
+        ? true
+        : filter === 'Management'
+        ? l.personType === 'Management'
+        : l.status === filter;
+      return matchSearch && matchFilter;
+    });
+  }, [labours, search, filter]);
 
   useEffect(() => { setPage(1); }, [search, filter, pageSize]);
   const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
@@ -65,41 +115,58 @@ export default function LabourModule() {
     const e = {};
     if (!form.name.trim()) e.name = 'Name is required';
     if (form.personType === 'Worker') {
-      if (!form.sheetType.trim()) e.sheetType = 'Sheet type is required';
-      if (!form.role)             e.role = 'Role is required';
+      if (!form.role) e.role = 'Role is required';
     }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
   const openAdd  = () => { setForm(initForm); setEditing(null); setErrors({}); setShowModal(true); };
-  const openEdit = (l) => { setForm({ name: l.name, sheetType: l.sheetType, role: l.role, phone: l.phone, status: l.status, joinDate: l.joinDate, personType: l.personType || 'Worker' }); setEditing(l); setErrors({}); setShowModal(true); };
+  const openEdit = (l) => {
+    setForm({
+      name: l.name,
+      role: l.role && l.role !== 'Worker' ? l.role : '',
+      phone: l.phone,
+      status: l.status,
+      joinDate: l.joinDate,
+      personType: l.personType || 'Worker',
+    });
+    setEditing(l);
+    setErrors({});
+    setShowModal(true);
+  };
 
   const handleSave = async () => {
     if (!validate()) return;
     setSaving(true);
+    const roleValue = form.personType === 'Management' ? 'Management' : (form.role || 'Worker');
     try {
       if (editing) {
-        // Update via workers API
         await api.put(`/workers/${editing.id}`, {
-          name: form.name, sheetType: form.sheetType || form.name,
-          isActive: form.status === 'Active', personType: form.personType
+          name: form.name,
+          sheetType: roleValue,
+          phone: form.phone || null,
+          joinDate: form.joinDate || null,
+          isActive: form.status === 'Active',
+          personType: form.personType,
         });
       } else {
-        // Create via workers API
         await api.post('/workers', {
-          name: form.name, sheetType: form.sheetType || form.name,
-          isActive: form.status === 'Active', personType: form.personType
+          name: form.name,
+          sheetType: roleValue,
+          phone: form.phone || null,
+          joinDate: form.joinDate || null,
+          isActive: form.status === 'Active',
+          personType: form.personType,
         });
       }
       await loadWorkers();
       setShowModal(false);
     } catch {
-      // Fallback: update local state
       if (editing) {
-        setLabours(labours.map(l => l.id === editing.id ? { ...l, ...form } : l));
+        setLabours(labours.map(l => l.id === editing.id ? { ...l, ...form, role: roleValue } : l));
       } else {
-        setLabours([...labours, { ...form, id: Date.now() }]);
+        setLabours([...labours, { ...form, role: roleValue, id: Date.now() }]);
       }
       setShowModal(false);
     }
@@ -116,8 +183,25 @@ export default function LabourModule() {
     setDeleteConfirm(null);
   };
 
+  const handleStatusToggleRequest = (l) => {
+    if (l.status === 'Active') {
+      setStatusConfirm({
+        id: l.id,
+        name: l.name,
+        currentStatus: 'Active',
+        targetStatus: 'Inactive',
+      });
+    } else {
+      setStatusConfirm({
+        id: l.id,
+        name: l.name,
+        currentStatus: 'Inactive',
+        targetStatus: 'Active',
+      });
+    }
+  };
+
   const toggleStatus = async (id) => {
-    const labour = labours.find(l => l.id === id);
     try {
       await api.patch(`/workers/${id}/toggle-status`);
       await loadWorkers();
@@ -127,211 +211,464 @@ export default function LabourModule() {
     }
   };
 
-  const active     = labours.filter(l => l.status === 'Active').length;
-  const inactive   = labours.filter(l => l.status === 'Inactive').length;
-  const management = labours.filter(l => l.personType === 'Management').length;
+  const activeCount     = labours.filter(l => l.status === 'Active').length;
+  const inactiveCount   = labours.filter(l => l.status === 'Inactive').length;
+  const managementCount = labours.filter(l => l.personType === 'Management').length;
 
   return (
-    <div style={styles.page}>
-      <div style={styles.header}>
-        <div>
-          <div style={styles.headerLabel}>Workforce</div>
-          <div style={styles.headerTitle}>Production</div>
+    <div style={styles.page(isDark)} className="hide-scrollbar">
+      {/* ── Professional Header Bar ── */}
+      <div style={styles.header(isDark)}>
+        <div style={styles.headerLeft}>
+          <div style={styles.headerIconWrap(currentColor.primary)}>
+            <span>⚙️</span>
+          </div>
+          <div>
+            <div style={styles.headerBreadcrumb}>WORKFORCE MANAGEMENT</div>
+            <h1 style={styles.headerTitle(isDark)}>Production Staff</h1>
+          </div>
         </div>
+
         {can('canAddLabour') && (
-          <button style={styles.addBtn} onClick={openAdd}>
-            <span style={{ fontSize: 18 }}>+</span> Add Worker
+          <button style={styles.addBtn(currentColor.primary)} onClick={openAdd}>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> Add New Worker
           </button>
         )}
       </div>
 
       {apiError && (
-        <div style={{ background: '#FBEAEA', color: '#BE0000', padding: '10px 2rem', fontSize: 13 }}>
+        <div style={styles.alertError}>
           ⚠️ {apiError}
         </div>
       )}
 
+      {/* ── Executive KPI Cards / Interactive Tabs ── */}
       <div style={styles.statsRow}>
-        {[
-          { label: 'Total Staff',  value: labours.length, color: '#2E75B6', bg: '#EBF3FB' },
-          { label: 'Active',       value: active,         color: '#70AD47', bg: '#EEF6E6' },
-          { label: 'Inactive',     value: inactive,       color: '#BE0000', bg: '#FBEAEA' },
-          { label: 'Management',   value: management,     color: '#7030A0', bg: '#F3E8FF' },
-        ].map(s => (
-          <div key={s.label} style={{ ...styles.statCard, background: s.bg, borderLeft: `4px solid ${s.color}` }}>
-            <div style={{ ...styles.statNum, color: s.color }}>{s.value}</div>
-            <div style={styles.statLabel}>{s.label}</div>
+        {/* Total Staff */}
+        <div
+          onClick={() => setFilter('All')}
+          style={styles.statCard('linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #3b82f6 100%)', 'rgba(37, 99, 235, 0.35)', filter === 'All')}
+          role="button"
+          tabIndex={0}
+          title="Filter: All Staff"
+        >
+          <div style={styles.statCardHeader}>
+            <span style={styles.statBadge}>ROSTER</span>
+            <span style={styles.statIcon}>👥</span>
           </div>
-        ))}
-      </div>
+          <div style={styles.statNum}>{labours.length}</div>
+          <div style={styles.statLabel}>Total Staff</div>
+        </div>
 
-      <div style={styles.toolbar}>
-        <input style={styles.search} placeholder="🔍  Search by name or role..."
-          value={search} onChange={e => setSearch(e.target.value)} />
-        <div style={styles.filterGroup}>
-          {['All', 'Active', 'Inactive'].map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              style={{ ...styles.filterBtn, ...(filter === f ? styles.filterActive : {}) }}>
-              {f}
-            </button>
-          ))}
+        {/* Active Staff */}
+        <div
+          onClick={() => setFilter('Active')}
+          style={styles.statCard('linear-gradient(135deg, #064e3b 0%, #059669 55%, #10b981 100%)', 'rgba(16, 185, 129, 0.35)', filter === 'Active')}
+          role="button"
+          tabIndex={0}
+          title="Filter: Active Staff"
+        >
+          <div style={styles.statCardHeader}>
+            <span style={styles.statBadge}>OPERATIONAL</span>
+            <span style={styles.statIcon}>⚡</span>
+          </div>
+          <div style={styles.statNum}>{activeCount}</div>
+          <div style={styles.statLabel}>Active Staff</div>
+        </div>
+
+        {/* Inactive Staff */}
+        <div
+          onClick={() => setFilter('Inactive')}
+          style={styles.statCard('linear-gradient(135deg, #831843 0%, #be123c 55%, #e11d48 100%)', 'rgba(225, 29, 72, 0.35)', filter === 'Inactive')}
+          role="button"
+          tabIndex={0}
+          title="Filter: Inactive Staff"
+        >
+          <div style={styles.statCardHeader}>
+            <span style={styles.statBadge}>OFFLINE / LEAVE</span>
+            <span style={styles.statIcon}>⏸️</span>
+          </div>
+          <div style={styles.statNum}>{inactiveCount}</div>
+          <div style={styles.statLabel}>Inactive</div>
+        </div>
+
+        {/* Management Staff */}
+        <div
+          onClick={() => setFilter('Management')}
+          style={styles.statCard('linear-gradient(135deg, #4c1d95 0%, #7c3aed 55%, #8b5cf6 100%)', 'rgba(139, 92, 246, 0.35)', filter === 'Management')}
+          role="button"
+          tabIndex={0}
+          title="Filter: Management Staff"
+        >
+          <div style={styles.statCardHeader}>
+            <span style={styles.statBadge}>SUPERVISORY</span>
+            <span style={styles.statIcon}>👔</span>
+          </div>
+          <div style={styles.statNum}>{managementCount}</div>
+          <div style={styles.statLabel}>Management</div>
         </div>
       </div>
 
-      <div style={styles.tableWrap}>
-        {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: '#aaa' }}>⏳ Loading workers...</div>
-        ) : (
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                {['#', 'Worker Name', 'Work Type', 'Role', 'Phone', 'Join Date', 'Status', 'Actions'].map(h => (
-                  <th key={h} style={styles.th}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paginated.length === 0 && (
-                <tr><td colSpan={8} style={styles.empty}>No labour records found</td></tr>
-              )}
-              {paginated.map((l, i) => (
-                <tr key={l.id} style={i % 2 === 0 ? styles.trEven : styles.trOdd}>
-                  <td style={styles.td}>{(page - 1) * pageSize + i + 1}</td>
-                  <td style={styles.td}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ ...styles.avatar, background: avatarColor(l.name) }}>
-                        {l.name.charAt(0).toUpperCase()}
-                      </div>
-                      <span style={{ fontWeight: 500 }}>{l.name}</span>
-                    </div>
-                  </td>
-                  <td style={styles.td}>
-                    {l.personType === 'Management'
-                      ? <span style={styles.mgmtBadge}>Management</span>
-                      : <span style={styles.sheetBadge}>{l.sheetType}</span>}
-                  </td>
-                  <td style={styles.td}>
-                    {l.personType === 'Management'
-                      ? <span style={{ color: '#7030A0', fontWeight: 600, fontSize: 12 }}>Owner / Salary</span>
-                      : l.role}
-                  </td>
-                  <td style={styles.td}>{l.phone || '—'}</td>
-                  <td style={styles.td}>{l.joinDate || '—'}</td>
-                  <td style={styles.td}>
-                    <span onClick={() => toggleStatus(l.id)}
-                      style={{ ...styles.statusBadge, ...(l.status === 'Active' ? styles.statusActive : styles.statusInactive) }}
-                      title="Click to toggle">
-                      {l.status}
-                    </span>
-                  </td>
-                  <td style={styles.td}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {can('canEditLabour') && (
-                        <button style={styles.editBtn} onClick={() => openEdit(l)}>Edit</button>
-                      )}
-                      {can('canDeleteLabour') && (
-                        <button style={styles.delBtn} onClick={() => setDeleteConfirm(l.id)}>Delete</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <LabPagination page={page} pageSize={pageSize} total={filtered.length} onPage={setPage} onPageSize={setPageSize} />
+      {/* ── Toolbar: Search & Filter Pills ── */}
+      <div style={styles.toolbar(isDark)}>
+        <div style={styles.searchBox(isDark)}>
+          <span style={styles.searchIcon}>🔍</span>
+          <input
+            style={styles.searchInput(isDark)}
+            placeholder="Search by worker name or role..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          {search && (
+            <button onClick={() => setSearch('')} style={styles.clearBtn(isDark)}>✕</button>
+          )}
+        </div>
+
+        <div style={styles.filterGroup}>
+          {[
+            { label: 'All Staff', key: 'All', count: labours.length },
+            { label: 'Active', key: 'Active', count: activeCount },
+            { label: 'Inactive', key: 'Inactive', count: inactiveCount },
+            { label: 'Management', key: 'Management', count: managementCount },
+          ].map(f => {
+            const isSel = filter === f.key;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                style={styles.filterPill(isSel, isDark, currentColor)}
+              >
+                <span>{f.label}</span>
+                <span style={styles.pillCount(isSel, isDark)}>{f.count}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* ── Table Card ── */}
+      <div style={styles.tableCard(isDark)}>
+        {loading ? (
+          <div style={styles.loadingBox(isDark)}>
+            <div style={styles.spinner} />
+            <div style={{ marginTop: 14, fontWeight: 600 }}>Loading workforce roster...</div>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th(isDark, 50)}>#</th>
+                  <th style={styles.th(isDark, 240)}>Worker Name</th>
+                  <th style={styles.th(isDark, 180)}>Role / Process</th>
+                  <th style={styles.th(isDark, 140)}>Phone</th>
+                  <th style={styles.th(isDark, 130)}>Join Date</th>
+                  <th style={styles.th(isDark, 120)}>Status</th>
+                  <th style={{ ...styles.th(isDark, 170), textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginated.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={styles.empty(isDark)}>
+                      <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔍</div>
+                      <div>No matching workforce records found</div>
+                      <div style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#94a3b8', marginTop: 4 }}>
+                        Try adjusting your search query or status filter
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  paginated.map((l, i) => {
+                    const ws = getWorkerStyle(l);
+                    return (
+                      <tr key={l.id} style={styles.tr(isDark, i % 2 === 0)}>
+                        {/* Row Index */}
+                        <td style={styles.tdIndex}>
+                          {(page - 1) * pageSize + i + 1}
+                        </td>
+
+                        {/* Worker Name with Signature Gradient Avatar */}
+                        <td style={styles.td}>
+                          <div style={styles.workerCell}>
+                            <div style={styles.avatarBox(ws.gradient)}>
+                              {ws.avatar}
+                            </div>
+                            <div>
+                              <div
+                                style={styles.workerNameLink(isDark)}
+                                onClick={() => navigate(`/staff/${l.id}`)}
+                                title={`Click to open ${l.name}'s production sheet`}
+                              >
+                                {l.name}
+                              </div>
+                              <span style={styles.workerSubId}>ID #{l.id}</span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Role */}
+                        <td style={styles.td}>
+                          {l.personType === 'Management' ? (
+                            <span style={styles.mgmtPill}>Owner / Salary</span>
+                          ) : (
+                            <span style={styles.sheetPill(isDark, ws.color)}>
+                              {l.role || 'Worker'}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Phone */}
+                        <td style={styles.td}>
+                          <span style={styles.phoneText(isDark)}>{l.phone || '—'}</span>
+                        </td>
+
+                        {/* Join Date */}
+                        <td style={styles.td}>
+                          <span style={styles.dateText(isDark)}>{l.joinDate || '—'}</span>
+                        </td>
+
+                        {/* Status Toggle Badge */}
+                        <td style={styles.td}>
+                          <button
+                            onClick={() => handleStatusToggleRequest(l)}
+                            style={styles.statusToggleBtn(l.status === 'Active')}
+                            title="Click to toggle status"
+                          >
+                            <span style={styles.statusDot(l.status === 'Active')} />
+                            <span>{l.status}</span>
+                          </button>
+                        </td>
+
+                        {/* Actions */}
+                        <td style={{ ...styles.td, textAlign: 'right' }}>
+                          <div style={styles.actionGroup}>
+                            <button
+                              style={styles.sheetShortcutBtn}
+                              onClick={() => navigate(`/staff/${l.id}`)}
+                              title="Open Production Sheet"
+                            >
+                              📋 Sheet
+                            </button>
+
+                            {can('canEditLabour') && (
+                              <button
+                                style={styles.editBtn}
+                                onClick={() => openEdit(l)}
+                                title="Edit Worker"
+                              >
+                                ✏️ Edit
+                              </button>
+                            )}
+
+                            {can('canDeleteLabour') && (
+                              <button
+                                style={styles.delBtn}
+                                onClick={() => setDeleteConfirm(l.id)}
+                                title="Delete Worker"
+                              >
+                                🗑️
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <LabPagination
+          page={page}
+          pageSize={pageSize}
+          total={filtered.length}
+          onPage={setPage}
+          onPageSize={setPageSize}
+          isDark={isDark}
+        />
+      </div>
+
+      {/* ── Add / Edit Modal ── */}
       {showModal && (
         <div style={styles.overlay}>
-          <div style={styles.modal}>
-            <div style={styles.modalHeader}>
-              <span style={styles.modalTitle}>{editing ? 'Edit Labour' : 'Add New Labour'}</span>
+          <div style={styles.modal(isDark)}>
+            <div style={styles.modalHeader(currentColor.primary)}>
+              <div>
+                <span style={styles.modalTitle}>{editing ? 'Edit Worker Profile' : 'Add New Workforce Member'}</span>
+                <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>Production Department</div>
+              </div>
               <button style={styles.closeBtn} onClick={() => setShowModal(false)}>✕</button>
             </div>
             <div style={styles.modalBody}>
               <div style={styles.formGrid}>
                 <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
-                  <label style={styles.label}>Person Type <span style={styles.req}>*</span></label>
-                  <select style={styles.input} value={form.personType}
-                    onChange={e => setForm({ ...form, personType: e.target.value })}>
+                  <label style={styles.label(isDark)}>Person Type <span style={styles.req}>*</span></label>
+                  <select
+                    style={styles.input(isDark)}
+                    value={form.personType}
+                    onChange={e => setForm({ ...form, personType: e.target.value })}
+                  >
                     <option value="Worker">Worker (Production Staff)</option>
-                    <option value="Management">Management (Owner / Salary Only)</option>
                   </select>
                 </div>
+
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Full Name <span style={styles.req}>*</span></label>
-                  <input style={{ ...styles.input, ...(errors.name ? styles.inputErr : {}) }}
-                    placeholder="e.g. Ali Hassan" value={form.name}
-                    onChange={e => setForm({ ...form, name: e.target.value })} />
+                  <label style={styles.label(isDark)}>Full Name <span style={styles.req}>*</span></label>
+                  <input
+                    style={{ ...styles.input(isDark), ...(errors.name ? styles.inputErr : {}) }}
+                    placeholder="e.g. Ali Hassan"
+                    value={form.name}
+                    onChange={e => setForm({ ...form, name: e.target.value })}
+                  />
                   {errors.name && <span style={styles.errMsg}>{errors.name}</span>}
                 </div>
+
                 {form.personType === 'Worker' && (
                   <div style={styles.formGroup}>
-                    <label style={styles.label}>Sheet Type <span style={styles.req}>*</span></label>
-                    <input style={{ ...styles.input, ...(errors.sheetType ? styles.inputErr : {}) }}
-                      placeholder="e.g. AliHassan" value={form.sheetType}
-                      onChange={e => setForm({ ...form, sheetType: e.target.value })} />
-                    {errors.sheetType && <span style={styles.errMsg}>{errors.sheetType}</span>}
-                  </div>
-                )}
-                {form.personType === 'Worker' && (
-                  <div style={styles.formGroup}>
-                    <label style={styles.label}>Role <span style={styles.req}>*</span></label>
-                    <select style={{ ...styles.input, ...(errors.role ? styles.inputErr : {}) }}
-                      value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
+                    <label style={styles.label(isDark)}>Role / Process <span style={styles.req}>*</span></label>
+                    <select
+                      style={{ ...styles.input(isDark), ...(errors.role ? styles.inputErr : {}) }}
+                      value={form.role}
+                      onChange={e => setForm({ ...form, role: e.target.value })}
+                    >
                       <option value="">-- Select Role --</option>
-                      {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                      {Array.from(new Set([...roles, ...(form.role ? [form.role] : [])])).map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
                     </select>
                     {errors.role && <span style={styles.errMsg}>{errors.role}</span>}
                   </div>
                 )}
+
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Phone Number</label>
-                  <input style={styles.input} placeholder="e.g. 0300-1234567"
-                    value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+                  <label style={styles.label(isDark)}>Phone Number</label>
+                  <input
+                    style={styles.input(isDark)}
+                    placeholder="e.g. 0300-1234567"
+                    value={form.phone}
+                    onChange={e => setForm({ ...form, phone: e.target.value })}
+                  />
                 </div>
+
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Join Date <span style={styles.req}>*</span></label>
-                  <input type="date" style={{ ...styles.input, ...(errors.joinDate ? styles.inputErr : {}) }}
-                    value={form.joinDate} onChange={e => setForm({ ...form, joinDate: e.target.value })} />
-                  {errors.joinDate && <span style={styles.errMsg}>{errors.joinDate}</span>}
+                  <label style={styles.label(isDark)}>Join Date</label>
+                  <input
+                    type="date"
+                    style={{ ...styles.input(isDark), ...(errors.joinDate ? styles.inputErr : {}) }}
+                    value={form.joinDate}
+                    onChange={e => setForm({ ...form, joinDate: e.target.value })}
+                  />
                 </div>
+
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Status</label>
-                  <select style={styles.input} value={form.status}
-                    onChange={e => setForm({ ...form, status: e.target.value })}>
+                  <label style={styles.label(isDark)}>Status</label>
+                  <select
+                    style={styles.input(isDark)}
+                    value={form.status}
+                    onChange={e => setForm({ ...form, status: e.target.value })}
+                  >
                     <option>Active</option>
                     <option>Inactive</option>
                   </select>
                 </div>
               </div>
             </div>
-            <div style={styles.modalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setShowModal(false)}>Cancel</button>
-              <button style={styles.saveBtn} onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : editing ? 'Update' : 'Save Labour'}
+
+            <div style={styles.modalFooter(isDark)}>
+              <button style={styles.cancelBtn(isDark)} onClick={() => setShowModal(false)}>Cancel</button>
+              <button style={styles.saveBtn(currentColor.primary)} onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : editing ? 'Update Worker' : 'Save Worker'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirm */}
+      {/* ── Status Change Confirmation Modal ── */}
+      {statusConfirm && (
+        <div style={styles.overlay} onClick={() => setStatusConfirm(null)}>
+          <div style={{ ...styles.modal(isDark), maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div
+              style={{
+                ...styles.modalHeader(statusConfirm.targetStatus === 'Inactive' ? '#be123c' : '#059669'),
+                background: statusConfirm.targetStatus === 'Inactive'
+                  ? 'linear-gradient(135deg, #be123c 0%, #9f1239 100%)'
+                  : 'linear-gradient(135deg, #059669 0%, #047857 100%)'
+              }}
+            >
+              <span style={styles.modalTitle}>
+                {statusConfirm.targetStatus === 'Inactive' ? '⚠️ Confirm Deactivation' : '✓ Confirm Activation'}
+              </span>
+              <button style={styles.closeBtn} onClick={() => setStatusConfirm(null)}>✕</button>
+            </div>
+            <div style={{ padding: '1.5rem', fontSize: 14, color: isDark ? 'var(--text-main)' : '#334155', lineHeight: 1.6 }}>
+              {statusConfirm.targetStatus === 'Inactive' ? (
+                <div>
+                  Are you sure you want to change status of <b>{statusConfirm.name}</b> from <span style={{ color: '#16a34a', fontWeight: 700 }}>Active</span> to <span style={{ color: '#dc2626', fontWeight: 700 }}>Inactive</span>?
+                  <div style={{
+                    fontSize: 12,
+                    color: isDark ? '#fca5a5' : '#b91c1c',
+                    marginTop: 12,
+                    background: isDark ? 'rgba(185, 28, 28, 0.15)' : '#fef2f2',
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    border: `1px solid ${isDark ? '#7f1d1d' : '#fecaca'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}>
+                    <span>⚠️</span>
+                    <span>This staff member will be marked inactive and placed on leave/offline.</span>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  Are you sure you want to reactivate <b>{statusConfirm.name}</b> and return them to <span style={{ color: '#16a34a', fontWeight: 700 }}>Active</span> duty?
+                </div>
+              )}
+            </div>
+            <div style={styles.modalFooter(isDark)}>
+              <button style={styles.cancelBtn(isDark)} onClick={() => setStatusConfirm(null)}>Cancel</button>
+              <button
+                style={{
+                  ...styles.saveBtn(statusConfirm.targetStatus === 'Inactive' ? '#be123c' : '#059669'),
+                  background: statusConfirm.targetStatus === 'Inactive'
+                    ? 'linear-gradient(135deg, #be123c 0%, #9f1239 100%)'
+                    : 'linear-gradient(135deg, #059669 0%, #047857 100%)'
+                }}
+                onClick={() => {
+                  const id = statusConfirm.id;
+                  setStatusConfirm(null);
+                  toggleStatus(id);
+                }}
+              >
+                {statusConfirm.targetStatus === 'Inactive' ? 'Yes, Mark Inactive' : 'Yes, Reactivate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation Modal ── */}
       {deleteConfirm && (
         <div style={styles.overlay}>
-          <div style={{ ...styles.modal, maxWidth: 400 }}>
-            <div style={{ ...styles.modalHeader, background: '#BE0000' }}>
+          <div style={{ ...styles.modal(isDark), maxWidth: 420 }}>
+            <div style={{ ...styles.modalHeader('#be123c'), background: '#be123c' }}>
               <span style={styles.modalTitle}>Confirm Delete</span>
               <button style={styles.closeBtn} onClick={() => setDeleteConfirm(null)}>✕</button>
             </div>
-            <div style={{ padding: '1.5rem', fontSize: 15, color: '#444' }}>
+            <div style={{ padding: '1.5rem', fontSize: 14, color: isDark ? 'var(--text-main)' : '#334155', lineHeight: 1.5 }}>
               Are you sure you want to delete <b>{labours.find(l => l.id === deleteConfirm)?.name}</b>?
+              <div style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>
+                This will deactivate or remove their worker profile.
+              </div>
             </div>
-            <div style={styles.modalFooter}>
-              <button style={styles.cancelBtn} onClick={() => setDeleteConfirm(null)}>Cancel</button>
-              <button style={{ ...styles.saveBtn, background: '#BE0000' }} onClick={() => handleDelete(deleteConfirm)}>
+            <div style={styles.modalFooter(isDark)}>
+              <button style={styles.cancelBtn(isDark)} onClick={() => setDeleteConfirm(null)}>Cancel</button>
+              <button style={{ ...styles.saveBtn('#be123c'), background: '#be123c' }} onClick={() => handleDelete(deleteConfirm)}>
                 Yes, Delete
               </button>
             </div>
@@ -342,91 +679,609 @@ export default function LabourModule() {
   );
 }
 
-function LabPagination({ page, pageSize, total, onPage, onPageSize }) {
+// ── Pagination Component ──
+function LabPagination({ page, pageSize, total, onPage, onPageSize, isDark }) {
   const totalPages = Math.ceil(total / pageSize);
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to   = Math.min(page * pageSize, total);
   const pages = [];
-  if (totalPages <= 7) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
-  else {
+
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
     pages.push(1);
     if (page > 3) pages.push('…');
     for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pages.push(i);
     if (page < totalPages - 2) pages.push('…');
     pages.push(totalPages);
   }
+
   return (
-    <div style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 16px', borderTop:'1px solid #eef1f6', flexWrap:'wrap', justifyContent:'space-between', background:'#fff' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-        <span style={{ fontSize:13, color:'#666' }}>Rows per page:</span>
-        <select value={pageSize} onChange={e => onPageSize(Number(e.target.value))} style={{ border:'1px solid #d0d8e4', borderRadius:5, padding:'4px 8px', fontSize:13 }}>
-          {[10,20,50,100].map(n => <option key={n} value={n}>{n}</option>)}
+    <div style={styles.paginationWrap(isDark)}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#64748b' }}>Rows per page:</span>
+        <select
+          value={pageSize}
+          onChange={e => onPageSize(Number(e.target.value))}
+          style={styles.pageSelect(isDark)}
+        >
+          {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
         </select>
-        <span style={{ fontSize:13, color:'#666' }}>Showing {from}–{to} of {total}</span>
+        <span style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#64748b' }}>
+          Showing {from}–{to} of {total}
+        </span>
       </div>
-      <div style={{ display:'flex', gap:4 }}>
-        <LabPageBtn onClick={() => onPage(page - 1)} disabled={page <= 1}>←</LabPageBtn>
-        {pages.map((p, i) => typeof p === 'number'
-          ? <LabPageBtn key={p} onClick={() => onPage(p)} active={p === page}>{p}</LabPageBtn>
-          : <span key={i} style={{ padding:'0 4px', color:'#aaa', lineHeight:'30px' }}>…</span>)}
-        <LabPageBtn onClick={() => onPage(page + 1)} disabled={page >= totalPages}>→</LabPageBtn>
+
+      <div style={{ display: 'flex', gap: 5 }}>
+        <LabPageBtn onClick={() => onPage(page - 1)} disabled={page <= 1} isDark={isDark}>‹</LabPageBtn>
+        {pages.map((p, i) =>
+          typeof p === 'number' ? (
+            <LabPageBtn key={p} onClick={() => onPage(p)} active={p === page} isDark={isDark}>
+              {p}
+            </LabPageBtn>
+          ) : (
+            <span key={i} style={{ padding: '0 4px', color: '#94a3b8', lineHeight: '32px' }}>…</span>
+          )
+        )}
+        <LabPageBtn onClick={() => onPage(page + 1)} disabled={page >= totalPages} isDark={isDark}>›</LabPageBtn>
       </div>
     </div>
   );
 }
-function LabPageBtn({ onClick, disabled, active, children }) {
+
+function LabPageBtn({ onClick, disabled, active, isDark, children }) {
   return (
-    <button onClick={onClick} disabled={disabled}
-      style={{ minWidth:30, height:30, border:`1px solid ${active ? '#2E75B6' : '#d0d8e4'}`, borderRadius:5, background: active ? '#2E75B6' : '#fff', color: active ? '#fff' : '#555', cursor: disabled ? 'default' : 'pointer', fontSize:13, fontWeight: active ? 700 : 400, opacity: disabled ? 0.4 : 1 }}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        minWidth: 32,
+        height: 32,
+        borderRadius: 8,
+        border: active ? '1px solid #3b82f6' : `1px solid ${isDark ? 'var(--border-color)' : '#cbd5e1'}`,
+        background: active ? '#2563eb' : (isDark ? 'var(--bg-subtle)' : '#ffffff'),
+        color: active ? '#ffffff' : (isDark ? 'var(--text-main)' : '#475569'),
+        cursor: disabled ? 'default' : 'pointer',
+        fontSize: 13,
+        fontWeight: active ? 700 : 500,
+        opacity: disabled ? 0.35 : 1,
+        transition: 'all .15s ease',
+      }}
+    >
       {children}
     </button>
   );
 }
 
+// ── Styles (Matching Staff Module & Professional Palettes) ──
 const styles = {
-  page:         { fontFamily: "'Segoe UI', Arial, sans-serif", background: '#F4F6F9', minHeight: '100vh', paddingBottom: '2rem' },
-  header:       { background: '#1e2a3b', padding: '1.2rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  headerLabel:  { color: '#7a9cc0', fontSize: 12, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 2 },
-  headerTitle:  { color: '#fff', fontSize: '1.4rem', fontWeight: 600 },
-  addBtn:       { background: '#70AD47', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 },
-  statsRow:     { display: 'flex', gap: 16, padding: '1.5rem 2rem 0' },
-  statCard:     { borderRadius: 10, padding: '1rem 1.5rem', flex: 1 },
-  statNum:      { fontSize: '2rem', fontWeight: 700 },
-  statLabel:    { fontSize: 13, color: '#666', marginTop: 2 },
-  toolbar:      { display: 'flex', gap: 12, padding: '1.2rem 2rem', alignItems: 'center', flexWrap: 'wrap' },
-  search:       { flex: 1, minWidth: 200, padding: '9px 14px', borderRadius: 8, border: '1px solid #d0d8e4', fontSize: 14, outline: 'none', background: '#fff' },
-  filterGroup:  { display: 'flex', gap: 4 },
-  filterBtn:    { padding: '8px 16px', border: '1px solid #d0d8e4', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13, color: '#555' },
-  filterActive: { background: '#2E75B6', color: '#fff', border: '1px solid #2E75B6' },
-  tableWrap:    { margin: '0 2rem', borderRadius: 10, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.07)', background: '#fff' },
-  table:        { width: '100%', borderCollapse: 'collapse', fontSize: 14 },
-  th:           { background: '#2E75B6', color: '#fff', padding: '12px 14px', textAlign: 'left', fontWeight: 500, fontSize: 13 },
-  trEven:       { background: '#fff' },
-  trOdd:        { background: '#f8fafd' },
-  td:           { padding: '11px 14px', borderBottom: '1px solid #eef1f6', verticalAlign: 'middle' },
-  empty:        { textAlign: 'center', padding: '3rem', color: '#aaa', fontSize: 15 },
-  avatar:       { width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14, flexShrink: 0 },
-  sheetBadge:   { background: '#EBF3FB', color: '#2E75B6', borderRadius: 4, padding: '3px 8px', fontSize: 12, fontWeight: 500 },
-  mgmtBadge:    { background: '#F3E8FF', color: '#7030A0', borderRadius: 4, padding: '3px 8px', fontSize: 12, fontWeight: 600 },
-  statusBadge:  { borderRadius: 20, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', userSelect: 'none' },
-  statusActive: { background: '#EEF6E6', color: '#4a8a1e' },
-  statusInactive: { background: '#FBEAEA', color: '#BE0000' },
-  editBtn:      { background: '#70AD47', color: '#fff', border: 'none', borderRadius: 5, padding: '5px 12px', cursor: 'pointer', fontSize: 12 },
-  delBtn:       { background: '#BE0000', color: '#fff', border: 'none', borderRadius: 5, padding: '5px 12px', cursor: 'pointer', fontSize: 12 },
-  overlay:      { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modal:        { background: '#fff', borderRadius: 12, width: '90%', maxWidth: 620, boxShadow: '0 8px 40px rgba(0,0,0,0.18)' },
-  modalHeader:  { background: '#1e2a3b', borderRadius: '12px 12px 0 0', padding: '1rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  modalTitle:   { color: '#fff', fontWeight: 600, fontSize: 16 },
-  closeBtn:     { background: 'none', border: 'none', color: '#fff', fontSize: 18, cursor: 'pointer' },
-  modalBody:    { padding: '1.5rem' },
-  formGrid:     { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 },
-  formGroup:    { display: 'flex', flexDirection: 'column', gap: 4 },
-  label:        { fontSize: 12, fontWeight: 600, color: '#555' },
-  req:          { color: '#BE0000' },
-  input:        { padding: '9px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, width: '100%' },
-  inputErr:     { border: '1px solid #BE0000' },
-  errMsg:       { fontSize: 11, color: '#BE0000' },
-  modalFooter:  { padding: '1rem 1.5rem', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end', gap: 10 },
-  cancelBtn:    { background: '#f0f2f5', color: '#555', border: 'none', borderRadius: 6, padding: '9px 20px', cursor: 'pointer', fontSize: 14 },
-  saveBtn:      { background: '#2E75B6', color: '#fff', border: 'none', borderRadius: 6, padding: '9px 22px', cursor: 'pointer', fontSize: 14, fontWeight: 600 },
+  page: (isDark) => ({
+    padding: '1.1rem 1.4rem',
+    minHeight: '100vh',
+    boxSizing: 'border-box',
+    width: '100%',
+  }),
+  header: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: '0.85rem',
+    marginBottom: '1rem',
+    padding: '1rem 1.4rem',
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#e2e8f0'}`,
+    boxShadow: 'var(--shadow-sm)',
+  }),
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.85rem',
+  },
+  headerIconWrap: (primaryColor) => ({
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    background: `${primaryColor}18`,
+    color: primaryColor,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '1.4rem',
+  }),
+  headerBreadcrumb: {
+    fontSize: '0.725rem',
+    fontWeight: 800,
+    color: '#64748b',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+  },
+  headerTitle: (isDark) => ({
+    fontSize: '1.4rem',
+    fontWeight: 700,
+    color: isDark ? 'var(--text-main)' : '#0f172a',
+    margin: '2px 0 0 0',
+    letterSpacing: '-0.02em',
+  }),
+  addBtn: (primaryColor) => ({
+    background: `linear-gradient(135deg, ${primaryColor} 0%, #1d4ed8 100%)`,
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 10,
+    padding: '9px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.28)',
+    transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+  }),
+  alertError: {
+    background: '#fef2f2',
+    color: '#b91c1c',
+    border: '1px solid #fecaca',
+    padding: '10px 16px',
+    borderRadius: 10,
+    fontSize: 13,
+    marginBottom: '1rem',
+  },
+
+  // ── Executive KPI Cards (Professional Colors & Gradients) ──
+  statsRow: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '0.9rem',
+    marginBottom: '1rem',
+  },
+  statCard: (gradient, glow, isSelected = false) => ({
+    background: gradient,
+    borderRadius: 14,
+    padding: '1.1rem 1.3rem',
+    color: '#ffffff',
+    boxShadow: isSelected ? `0 8px 25px ${glow}` : `0 4px 14px ${glow}`,
+    border: isSelected ? '2px solid #ffffff' : '1px solid rgba(255, 255, 255, 0.18)',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    minHeight: 110,
+    position: 'relative',
+    overflow: 'hidden',
+    cursor: 'pointer',
+    transform: isSelected ? 'translateY(-2px)' : 'none',
+    outline: isSelected ? '3px solid rgba(255, 255, 255, 0.75)' : 'none',
+    transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+  }),
+  statCardHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statBadge: {
+    fontSize: '0.675rem',
+    fontWeight: 800,
+    letterSpacing: '0.05em',
+    padding: '2px 8px',
+    borderRadius: 10,
+    background: 'rgba(255, 255, 255, 0.2)',
+    backdropFilter: 'blur(4px)',
+    color: '#ffffff',
+  },
+  statIcon: {
+    fontSize: '1.25rem',
+    opacity: 0.85,
+  },
+  statNum: {
+    fontSize: '1.85rem',
+    fontWeight: 800,
+    color: '#ffffff',
+    margin: '6px 0 2px',
+    letterSpacing: '-0.02em',
+  },
+  statLabel: {
+    fontSize: '0.8rem',
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: 600,
+  },
+
+  // ── Toolbar ──
+  toolbar: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
+    flexWrap: 'wrap',
+    marginBottom: '1rem',
+    padding: '0.75rem 1.1rem',
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 12,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#e2e8f0'}`,
+    boxShadow: 'var(--shadow-sm)',
+  }),
+  searchBox: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    background: isDark ? 'var(--bg-subtle)' : '#f8fafc',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#cbd5e1'}`,
+    borderRadius: 8,
+    padding: '6px 12px',
+    flex: 1,
+    minWidth: 260,
+    maxWidth: 420,
+  }),
+  searchIcon: {
+    fontSize: '0.85rem',
+    marginRight: 8,
+    opacity: 0.6,
+  },
+  searchInput: (isDark) => ({
+    border: 'none',
+    background: 'transparent',
+    color: isDark ? 'var(--text-main)' : '#0f172a',
+    fontSize: '0.85rem',
+    outline: 'none',
+    width: '100%',
+  }),
+  clearBtn: (isDark) => ({
+    background: 'transparent',
+    border: 'none',
+    color: isDark ? 'var(--text-muted)' : '#94a3b8',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    padding: '0 4px',
+  }),
+  filterGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.45rem',
+    flexWrap: 'wrap',
+  },
+  filterPill: (isSel, isDark, currentColor) => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 12px',
+    borderRadius: 16,
+    border: isSel ? `1px solid ${currentColor.primary}` : `1px solid ${isDark ? 'var(--border-color)' : '#e2e8f0'}`,
+    background: isSel ? currentColor.primary : (isDark ? 'var(--bg-subtle)' : '#f8fafc'),
+    color: isSel ? '#ffffff' : (isDark ? 'var(--text-main)' : '#475569'),
+    fontSize: '0.775rem',
+    fontWeight: isSel ? 700 : 600,
+    cursor: 'pointer',
+    transition: 'all .15s ease',
+  }),
+  pillCount: (isSel, isDark) => ({
+    fontSize: '0.7rem',
+    padding: '1px 6px',
+    borderRadius: 10,
+    background: isSel ? 'rgba(255,255,255,0.25)' : (isDark ? '#334155' : '#e2e8f0'),
+    color: isSel ? '#ffffff' : (isDark ? '#cbd5e1' : '#475569'),
+    fontWeight: 700,
+  }),
+
+  // ── Table Card ──
+  tableCard: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 14,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#e2e8f0'}`,
+    boxShadow: 'var(--shadow-sm)',
+    overflow: 'hidden',
+  }),
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '0.875rem',
+    textAlign: 'left',
+  },
+  th: (isDark, width) => ({
+    background: isDark ? 'var(--bg-subtle)' : '#1e2a3b',
+    color: '#ffffff',
+    padding: '12px 16px',
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    width: width || 'auto',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+  }),
+  tr: (isDark, isEven) => ({
+    background: isEven
+      ? (isDark ? 'var(--bg-card)' : '#ffffff')
+      : (isDark ? 'rgba(255,255,255,0.015)' : '#f8fafc'),
+    borderBottom: `1px solid ${isDark ? 'var(--border-color)' : '#f1f5f9'}`,
+    transition: 'background .12s ease',
+  }),
+  tdIndex: {
+    padding: '12px 16px',
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    color: '#94a3b8',
+  },
+  td: {
+    padding: '12px 16px',
+    verticalAlign: 'middle',
+  },
+  workerCell: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+  },
+  avatarBox: (gradient) => ({
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    background: gradient,
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 800,
+    fontSize: '0.85rem',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+    flexShrink: 0,
+  }),
+  workerNameLink: (isDark) => ({
+    fontWeight: 700,
+    fontSize: '0.925rem',
+    color: isDark ? '#ffffff' : '#0f172a',
+    cursor: 'pointer',
+    transition: 'color .12s ease',
+  }),
+  workerSubId: {
+    fontSize: '0.725rem',
+    color: '#94a3b8',
+    fontWeight: 600,
+  },
+  sheetPill: (isDark, color) => ({
+    display: 'inline-block',
+    padding: '3px 9px',
+    borderRadius: 6,
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    background: `${color}15`,
+    color: color,
+    border: `1px solid ${color}30`,
+  }),
+  mgmtPill: {
+    display: 'inline-block',
+    padding: '3px 9px',
+    borderRadius: 6,
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    background: '#7c3aed18',
+    color: '#7c3aed',
+    border: '1px solid #7c3aed35',
+  },
+  roleText: (isDark) => ({
+    fontSize: '0.825rem',
+    fontWeight: 600,
+    color: isDark ? 'var(--text-muted)' : '#475569',
+  }),
+  phoneText: (isDark) => ({
+    fontSize: '0.8rem',
+    color: isDark ? 'var(--text-muted)' : '#64748b',
+  }),
+  dateText: (isDark) => ({
+    fontSize: '0.8rem',
+    color: isDark ? 'var(--text-muted)' : '#64748b',
+  }),
+  statusToggleBtn: (isActive) => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '4px 10px',
+    borderRadius: 14,
+    border: isActive ? '1px solid #86efac' : '1px solid #fca5a5',
+    background: isActive ? '#f0fdf4' : '#fef2f2',
+    color: isActive ? '#15803d' : '#b91c1c',
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'all .12s ease',
+  }),
+  statusDot: (isActive) => ({
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: isActive ? '#22c55e' : '#ef4444',
+  }),
+  actionGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
+  sheetShortcutBtn: {
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: '1px solid #cbd5e1',
+    background: '#ffffff',
+    color: '#1e293b',
+    fontSize: '0.75rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'background .15s',
+  },
+  editBtn: {
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: '1px solid #3b82f6',
+    background: '#eff6ff',
+    color: '#2563eb',
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    transition: 'background .15s',
+  },
+  delBtn: {
+    padding: '5px 8px',
+    borderRadius: 6,
+    border: '1px solid #fca5a5',
+    background: '#fef2f2',
+    color: '#dc2626',
+    fontSize: '0.75rem',
+    cursor: 'pointer',
+  },
+  empty: (isDark) => ({
+    textAlign: 'center',
+    padding: '4rem 2rem',
+    color: isDark ? 'var(--text-muted)' : '#64748b',
+    fontSize: '1rem',
+    fontWeight: 600,
+  }),
+
+  // ── Pagination ──
+  paginationWrap: (isDark) => ({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 18px',
+    borderTop: `1px solid ${isDark ? 'var(--border-color)' : '#f1f5f9'}`,
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    flexWrap: 'wrap',
+    gap: 10,
+  }),
+  pageSelect: (isDark) => ({
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#cbd5e1'}`,
+    background: isDark ? 'var(--bg-subtle)' : '#ffffff',
+    color: isDark ? 'var(--text-main)' : '#0f172a',
+    borderRadius: 6,
+    padding: '4px 8px',
+    fontSize: 13,
+  }),
+
+  // ── Modals ──
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(15, 23, 42, 0.65)',
+    backdropFilter: 'blur(3px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+    padding: '1rem',
+  },
+  modal: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 580,
+    boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
+    overflow: 'hidden',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#e2e8f0'}`,
+  }),
+  modalHeader: (primaryColor) => ({
+    background: `linear-gradient(135deg, ${primaryColor} 0%, #1e3a8a 100%)`,
+    padding: '1.1rem 1.4rem',
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  }),
+  modalTitle: {
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    margin: 0,
+  },
+  closeBtn: {
+    background: 'rgba(255,255,255,0.2)',
+    border: 'none',
+    color: '#ffffff',
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 14,
+    cursor: 'pointer',
+  },
+  modalBody: {
+    padding: '1.4rem',
+  },
+  formGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 14,
+  },
+  formGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 5,
+  },
+  label: (isDark) => ({
+    fontSize: 12,
+    fontWeight: 700,
+    color: isDark ? 'var(--text-main)' : '#334155',
+  }),
+  req: {
+    color: '#ef4444',
+  },
+  input: (isDark) => ({
+    padding: '9px 12px',
+    borderRadius: 8,
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#cbd5e1'}`,
+    background: isDark ? 'var(--bg-subtle)' : '#ffffff',
+    color: isDark ? 'var(--text-main)' : '#0f172a',
+    fontSize: 13,
+    outline: 'none',
+    width: '100%',
+    boxSizing: 'border-box',
+  }),
+  inputErr: {
+    borderColor: '#ef4444',
+  },
+  errMsg: {
+    fontSize: 11,
+    color: '#ef4444',
+    marginTop: 2,
+  },
+  modalFooter: (isDark) => ({
+    padding: '1rem 1.4rem',
+    borderTop: `1px solid ${isDark ? 'var(--border-color)' : '#f1f5f9'}`,
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 10,
+    background: isDark ? 'var(--bg-subtle)' : '#f8fafc',
+  }),
+  cancelBtn: (isDark) => ({
+    background: isDark ? 'var(--bg-card)' : '#ffffff',
+    border: `1px solid ${isDark ? 'var(--border-color)' : '#cbd5e1'}`,
+    color: isDark ? 'var(--text-main)' : '#475569',
+    borderRadius: 8,
+    padding: '8px 18px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  }),
+  saveBtn: (primaryColor) => ({
+    background: primaryColor,
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '8px 22px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+  }),
+  loadingBox: (isDark) => ({
+    padding: '4rem',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: isDark ? 'var(--text-muted)' : '#64748b',
+  }),
+  spinner: {
+    width: 32,
+    height: 32,
+    border: '3px solid #cbd5e1',
+    borderTopColor: '#3b82f6',
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+  },
 };

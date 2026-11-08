@@ -1,18 +1,36 @@
 import { useState, useEffect, useMemo } from 'react';
-import { deleteEntry } from '../services/api';
+import { deleteEntry, getWorkers } from '../services/api';
 import EntryForm from './EntryForm';
+import LotHistoryModal from './LotHistoryModal';
+import AiSlipScannerModal from './AiSlipScannerModal';
+import { useTheme } from '../context/ThemeContext';
 
 export default function WorkerTable({ workerId, columns, entries, reload, dropdowns }) {
+  const { isDark } = useTheme();
   const [editing, setEditing]       = useState(null);
   const [showForm, setShowForm]     = useState(false);
+  const [showScanModal, setShowScanModal] = useState(false);
+  const [allWorkers, setAllWorkers] = useState([]);
   const [collapsed, setCollapsed]   = useState({});
   const [lotSearch, setLotSearch]   = useState('');
   const [previewImg, setPreviewImg] = useState(null);
   const [lotPage,    setLotPage]    = useState(1);
   const [lotPageSize,setLotPageSize]= useState(10);
+  const [selectedLot, setSelectedLot] = useState(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+
+  useEffect(() => {
+    getWorkers().then(setAllWorkers).catch(() => {});
+  }, []);
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this entry?')) return;
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return;
+    const id = deleteConfirmId;
+    setDeleteConfirmId(null);
     await deleteEntry(id);
     reload();
   };
@@ -64,10 +82,47 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
             Showing {filteredLots.length === 0 ? 0 : (lotPage - 1) * lotPageSize + 1}–{Math.min(lotPage * lotPageSize, filteredLots.length)} of {filteredLots.length}
           </span>
         </div>
-        <button onClick={() => { setEditing(null); setShowForm(true); }} style={styles.addBtn}>
-          + Add Entry
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => setShowScanModal(true)}
+            style={{
+              padding: '7px 14px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 55%, #0284c7 100%)',
+              color: '#ffffff',
+              fontWeight: 700,
+              fontSize: 13,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              boxShadow: '0 2px 8px rgba(37,99,235,0.25)',
+            }}
+            title="Scan paper slip using Gemini Vision AI"
+          >
+            <span>📷</span> Scan Slip (AI)
+          </button>
+          <button onClick={() => { setEditing(null); setShowForm(true); }} style={styles.addBtn}>
+            + Add Entry
+          </button>
+        </div>
       </div>
+
+      {/* AI Slip Scanner Modal */}
+      {showScanModal && (
+        <AiSlipScannerModal
+          isOpen={showScanModal}
+          onClose={() => setShowScanModal(false)}
+          initialWorkerId={workerId}
+          workers={allWorkers}
+          dropdowns={dropdowns}
+          onEntriesImported={() => {
+            reload();
+          }}
+        />
+      )}
 
       {/* Add / Edit Form */}
       {showForm && (
@@ -114,7 +169,45 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
                     <td colSpan={columns.length + 2} style={styles.lotCell}>
                       <div style={styles.lotHeader}>
                         <div style={styles.lotInfo}>
-                          <span style={styles.lotBadge}>{lot}</span>
+                          <span
+                            style={{ ...styles.lotBadge, cursor: 'pointer' }}
+                            onClick={e => {
+                              e.stopPropagation();
+                              setSelectedLot({
+                                id: rows[0]?.lotId,
+                                lotNumber: lot,
+                                sizeName: rows[0]?.size,
+                                material: rows[0]?.lotMaterial,
+                              });
+                            }}
+                            title="Click to see all staff who worked on this lot"
+                          >
+                            {lot} 🔍
+                          </span>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation();
+                              setSelectedLot({
+                                id: rows[0]?.lotId,
+                                lotNumber: lot,
+                                sizeName: rows[0]?.size,
+                                material: rows[0]?.lotMaterial,
+                              });
+                            }}
+                            style={{
+                              background: '#ffffff',
+                              color: '#1d4ed8',
+                              border: '1px solid #93c5fd',
+                              borderRadius: 20,
+                              padding: '2px 9px',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                            }}
+                            title="View all persons who worked on this lot"
+                          >
+                            👥 Who Worked
+                          </button>
                           <span style={styles.lotMeta}>
                             {rows[0]?.size && <span style={styles.metaTag}>{rows[0].size}</span>}
                             {rows[0]?.lotMaterial && <span style={styles.metaTag}>{rows[0].lotMaterial}</span>}
@@ -143,6 +236,21 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
                             ? <span style={row[c.key] ? styles.yes : styles.no}>{row[c.key] ? '✓' : '✗'}</span>
                             : c.key === 'dateCompleted'
                             ? (row[c.key] ? new Date(row[c.key]).toLocaleDateString('en-PK') : '—')
+                            : c.key === 'lotNumber'
+                            ? (
+                              <span
+                                onClick={() => setSelectedLot({
+                                  id: row.lotId,
+                                  lotNumber: row.lotNumber,
+                                  sizeName: row.size,
+                                  material: row.lotMaterial,
+                                })}
+                                style={{ color: '#2563eb', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                                title="Click to see who worked on this lot"
+                              >
+                                {row[c.key] ?? '—'}
+                              </span>
+                            )
                             : (row[c.key] ?? '—')}
                         </td>
                       ))}
@@ -174,6 +282,53 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
           <div style={styles.imgPopup} onClick={e => e.stopPropagation()}>
             <button style={styles.imgClose} onClick={() => setPreviewImg(null)}>✕</button>
             <img src={previewImg} alt="preview" style={styles.imgFull} />
+          </div>
+        </div>
+      )}
+
+      {selectedLot && (
+        <LotHistoryModal
+          lot={selectedLot}
+          onClose={() => setSelectedLot(null)}
+        />
+      )}
+
+      {/* ── Confirm Delete Modal ── */}
+      {deleteConfirmId && (
+        <div style={styles.modalOverlay} onClick={() => setDeleteConfirmId(null)}>
+          <div style={styles.modalCard(isDark)} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeaderDanger}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <span style={{ fontWeight: 700, fontSize: '1.05rem', color: '#ffffff' }}>Confirm Delete</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(null)}
+                style={styles.modalCloseBtn}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: '1.4rem', fontSize: 14, color: isDark ? '#e2e8f0' : '#334155', lineHeight: 1.6 }}>
+              Are you sure you want to delete this production entry? This action cannot be undone.
+            </div>
+            <div style={styles.modalFooter(isDark)}>
+              <button
+                type="button"
+                style={styles.modalCancelBtn(isDark)}
+                onClick={() => setDeleteConfirmId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={styles.modalDeleteBtn}
+                onClick={confirmDelete}
+              >
+                Yes, Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -265,4 +420,74 @@ const styles = {
   imgPopup:   { position: 'relative', borderRadius: 12, overflow: 'hidden', maxWidth: '90vw', maxHeight: '90vh', boxShadow: '0 30px 60px rgba(0,0,0,0.6)' },
   imgFull:    { display: 'block', maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain' },
   imgClose:   { position: 'absolute', top: 10, right: 10, background: 'rgba(0,0,0,0.6)', border: 'none', color: '#fff', fontSize: 18, width: 36, height: 36, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
+  modalOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(15, 23, 42, 0.65)',
+    backdropFilter: 'blur(3px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1050,
+    padding: 16,
+  },
+  modalCard: (isDark) => ({
+    background: isDark ? 'var(--bg-card, #1e293b)' : '#ffffff',
+    borderRadius: 14,
+    width: '100%',
+    maxWidth: 420,
+    overflow: 'hidden',
+    boxShadow: '0 20px 40px rgba(0, 0, 0, 0.3)',
+    border: `1px solid ${isDark ? 'var(--border-color, #334155)' : '#dee2e6'}`,
+  }),
+  modalHeaderDanger: {
+    background: 'linear-gradient(135deg, #be123c 0%, #dc2626 100%)',
+    color: '#ffffff',
+    padding: '1rem 1.3rem',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modalCloseBtn: {
+    background: 'rgba(255, 255, 255, 0.2)',
+    border: 'none',
+    color: '#ffffff',
+    width: 26,
+    height: 26,
+    borderRadius: '50%',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 13,
+  },
+  modalFooter: (isDark) => ({
+    padding: '1rem 1.3rem',
+    borderTop: `1px solid ${isDark ? 'var(--border-color, #334155)' : '#f1f5f9'}`,
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 10,
+    background: isDark ? 'var(--bg-subtle, #0f172a)' : '#f8fafc',
+  }),
+  modalCancelBtn: (isDark) => ({
+    background: isDark ? 'var(--bg-card, #1e293b)' : '#ffffff',
+    border: `1px solid ${isDark ? 'var(--border-color, #334155)' : '#cbd5e1'}`,
+    color: isDark ? 'var(--text-main, #e2e8f0)' : '#475569',
+    borderRadius: 8,
+    padding: '7px 16px',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  }),
+  modalDeleteBtn: {
+    background: 'linear-gradient(135deg, #be123c 0%, #dc2626 100%)',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 8,
+    padding: '7px 18px',
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: 'pointer',
+    boxShadow: '0 2px 6px rgba(220, 38, 38, 0.3)',
+  },
 };

@@ -48,15 +48,24 @@ const LOCAL_USERS = [
   { username: 'viewer',  password: 'viewer123',  name: 'Viewer',        role: 'Viewer',  token: 'local-viewer-token' },
 ];
 
-const buildUser = (data) => ({
-  token:       data.token,
-  name:        data.name,
-  username:    data.username,
-  role:        data.role,
-  avatar:      data.name?.charAt(0).toUpperCase() || 'U',
-  // Prefer server-returned permissions; fall back to hardcoded table for local/demo users
-  permissions: data.permissions || PERMISSIONS[data.role] || {},
-});
+const buildUser = (data) => {
+  const defaultPerms = PERMISSIONS[data.role] || {};
+  const serverPerms = (data.permissions && Object.keys(data.permissions).length > 0)
+    ? data.permissions
+    : {};
+  const permissions = data.role === 'Admin'
+    ? { ...defaultPerms, ...serverPerms, ...PERMISSIONS.Admin }
+    : { ...defaultPerms, ...serverPerms };
+
+  return {
+    token:       data.token,
+    name:        data.name,
+    username:    data.username,
+    role:        data.role,
+    avatar:      data.name?.charAt(0).toUpperCase() || 'U',
+    permissions,
+  };
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -99,6 +108,7 @@ export function AuthProvider({ children }) {
 
   const can = (permission) => {
     if (!user) return false;
+    if (user.role === 'Admin') return true;
     return user.permissions?.[permission] ?? false;
   };
 

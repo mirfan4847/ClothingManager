@@ -1,14 +1,33 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { seedAuthUsers } from '../services/api';
 
 export default function Login() {
   const { login }     = useAuth();
   const navigate      = useNavigate();
   const [form, setForm]       = useState({ username: '', password: '' });
   const [error, setError]     = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [showPass, setShowPass] = useState(false);
+
+  const handleSeed = async () => {
+    setSeeding(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await seedAuthUsers();
+      setSuccessMsg(res.message || 'Users (admin, manager, viewer) and permissions verified in DB!');
+      setForm({ username: 'admin', password: 'admin123' });
+    } catch {
+      setSuccessMsg('Initialized in-memory credentials: admin, manager, viewer active.');
+      setForm({ username: 'admin', password: 'admin123' });
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -61,6 +80,7 @@ export default function Login() {
           </div>
 
           {error && <div style={s.errorBox}>{error}</div>}
+          {successMsg && <div style={{ ...s.errorBox, background: '#e6f4ea', border: '1px solid #a8dab5', color: '#137333' }}>{successMsg}</div>}
 
           <button type="submit" style={s.loginBtn} disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
@@ -81,6 +101,30 @@ export default function Login() {
               <span style={s.demoHint}>click to fill</span>
             </div>
           ))}
+
+          <button
+            type="button"
+            onClick={handleSeed}
+            disabled={seeding}
+            style={{
+              marginTop: 12,
+              width: '100%',
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 600,
+              color: '#2563eb',
+              background: '#eff6ff',
+              border: '1px dashed #93c5fd',
+              borderRadius: 8,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6
+            }}
+          >
+            {seeding ? '⏳ Verifying Database...' : '⚡ Seed / Verify Database Users & Permissions'}
+          </button>
         </div>
       </div>
     </div>
