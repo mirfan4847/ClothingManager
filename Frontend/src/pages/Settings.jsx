@@ -20,7 +20,7 @@ const BT = {
 };
 
 const DEFAULT_MASTER_ITEMS = {
-  taskTypes: ['Front', 'Bazo', 'Tape', 'Pocket', 'Gala', 'Lable', 'Moda', 'Quantity', 'TotalPiece'],
+  taskTypes: ['Front', 'Bazo', 'Tape', 'Pocket', 'Gala', 'Lable', 'Moda', 'Quantity', 'Total Price'],
   materials: ['Mink', 'Mink Bo', 'Cotton', 'Polister', 'Fleece', 'Khaddar', 'Lawn', 'Other'],
   bagTypes: ['Boray', 'Diby', 'Bobay'],
   workerRoles: ['Stitching', 'Machine Op', 'Pressing', 'Finishing', 'Safety', 'Cutting', 'Kajkari', 'Buttons', 'Other'],
@@ -683,6 +683,8 @@ function MasterTable({ tab, can, options, onCountChange }) {
   const [selectedLot, setSelectedLot] = useState(null);
   const [page,     setPage]         = useState(1);
   const [pageSize, setPageSize]     = useState(15);
+  const [sortField, setSortField]   = useState(tab.key === 'lots' ? 'lotNumber' : null);
+  const [sortDirection, setSortDirection] = useState('desc');
 
   const load = async () => {
     setLoading(true);
@@ -850,8 +852,40 @@ function MasterTable({ tab, can, options, onCountChange }) {
     });
   });
 
-  useEffect(() => { setPage(1); }, [search, statusFilter, materialFilter, pageSize]);
-  const paginated = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+  const handleSort = (fieldKey) => {
+    if (sortField === fieldKey) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(fieldKey);
+      setSortDirection(fieldKey === 'lotNumber' ? 'desc' : 'asc');
+    }
+  };
+
+  const sorted = useMemo(() => {
+    const activeSortField = sortField || (tab.key === 'lots' ? 'lotNumber' : null);
+    const activeDirection = sortDirection || 'desc';
+
+    if (!activeSortField) return filtered;
+
+    return [...filtered].sort((a, b) => {
+      const field = tab.fields.find(f => f.key === activeSortField);
+      const key = field?.displayKey ?? activeSortField;
+
+      const valA = String(a[key] ?? a[activeSortField] ?? '').trim();
+      const valB = String(b[key] ?? b[activeSortField] ?? '').trim();
+
+      if (!valA && !valB) return (b.id || 0) - (a.id || 0);
+      if (!valA) return 1;
+      if (!valB) return -1;
+
+      const cmp = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+      const res = activeDirection === 'desc' ? -cmp : cmp;
+      return res !== 0 ? res : (b.id || 0) - (a.id || 0);
+    });
+  }, [filtered, sortField, sortDirection, tab.key, tab.fields]);
+
+  useEffect(() => { setPage(1); }, [search, statusFilter, materialFilter, pageSize, sortField, sortDirection]);
+  const paginated = useMemo(() => sorted.slice((page - 1) * pageSize, page * pageSize), [sorted, page, pageSize]);
 
   const getDisplayValue = (r, f) => {
     if (f.displayKey) return r[f.displayKey] || '—';
@@ -945,9 +979,29 @@ function MasterTable({ tab, can, options, onCountChange }) {
               <thead>
                 <tr>
                   <th style={{ ...styles.th(isDark), width: 60, textAlign: 'center' }}>#</th>
-                  {tab.fields.map(f => (
-                    <th key={f.key} style={styles.th(isDark)}>{f.label}</th>
-                  ))}
+                  {tab.fields.map(f => {
+                    const isSorted = (sortField === f.key) || (!sortField && tab.key === 'lots' && f.key === 'lotNumber');
+                    const currentDir = isSorted ? sortDirection : null;
+                    return (
+                      <th
+                        key={f.key}
+                        style={{
+                          ...styles.th(isDark),
+                          cursor: 'pointer',
+                          userSelect: 'none',
+                        }}
+                        onClick={() => handleSort(f.key)}
+                        title={`Click to sort by ${f.label}`}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <span>{f.label}</span>
+                          <span style={{ fontSize: 11, color: isSorted ? (tab.color || '#0d6efd') : (isDark ? '#64748b' : '#9ca3af') }}>
+                            {currentDir === 'desc' ? '▼' : currentDir === 'asc' ? '▲' : '⇅'}
+                          </span>
+                        </div>
+                      </th>
+                    );
+                  })}
                   {tab.key === 'lots' && (
                     <th style={{ ...styles.th(isDark), width: 90, textAlign: 'center' }}>Photo</th>
                   )}

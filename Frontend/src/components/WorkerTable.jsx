@@ -1,11 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
-import { deleteEntry, getWorkers } from '../services/api';
+import { deleteEntry, getWorkers, getWageRates, upsertWageRate } from '../services/api';
 import EntryForm from './EntryForm';
 import LotHistoryModal from './LotHistoryModal';
 import AiSlipScannerModal from './AiSlipScannerModal';
 import { useTheme } from '../context/ThemeContext';
 
-export default function WorkerTable({ workerId, columns, entries, reload, dropdowns }) {
+export default function WorkerTable({
+  workerId,
+  columns,
+  entries,
+  reload,
+  dropdowns,
+  workerRate: externalWorkerRate,
+  onWorkerRateChange,
+  entryRates: externalEntryRates,
+  onEntryRatesChange,
+}) {
   const { isDark } = useTheme();
   const [editing, setEditing]       = useState(null);
   const [showForm, setShowForm]     = useState(false);
@@ -18,10 +28,48 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
   const [lotPageSize,setLotPageSize]= useState(10);
   const [selectedLot, setSelectedLot] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [dateSortDir, setDateSortDir] = useState('desc'); // 'desc' | 'asc'
+  const [internalWorkerRate, setInternalWorkerRate] = useState(() => {
+    const saved = localStorage.getItem(`cm_worker_rate_${workerId}`);
+    return saved ? Number(saved) : 0;
+  });
+  const [internalEntryRates, setInternalEntryRates] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`cm_entry_rates_${workerId}`) || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const [editingRateRowId, setEditingRateRowId] = useState(null);
+  const [rateInputVal, setRateInputVal]         = useState('');
+
+  const workerRate = externalWorkerRate !== undefined ? externalWorkerRate : internalWorkerRate;
+  const entryRates = externalEntryRates !== undefined ? externalEntryRates : internalEntryRates;
+
+  const updateWorkerRate = (rate) => {
+    setInternalWorkerRate(rate);
+    if (onWorkerRateChange) onWorkerRateChange(rate);
+  };
+
+  const updateEntryRates = (rates) => {
+    setInternalEntryRates(rates);
+    if (onEntryRatesChange) onEntryRatesChange(rates);
+  };
 
   useEffect(() => {
     getWorkers().then(setAllWorkers).catch(() => {});
-  }, []);
+    if (workerId && externalWorkerRate === undefined) {
+      getWageRates(workerId).then(rates => {
+        if (Array.isArray(rates) && rates.length > 0) {
+          const r = rates.find(x => x.taskType?.toLowerCase() === 'quantity' || x.taskType?.toLowerCase() === 'cutting') || rates[0];
+          if (r && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
+            updateWorkerRate(Number(r.ratePerPiece));
+            localStorage.setItem(`cm_worker_rate_${workerId}`, String(r.ratePerPiece));
+          }
+        }
+      }).catch(() => {});
+    }
+  }, [workerId, externalWorkerRate]);
 
   const handleDelete = async (id) => {
     setDeleteConfirmId(id);
@@ -39,6 +87,88 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
 
   const toggleLot = (lot) => setCollapsed(c => ({ ...c, [lot]: !c[lot] }));
 
+  // Ensure Rate and Total Price columns are present
+  const effectiveColumns = useMemo(() => {
+    let cols = [...columns];
+    if (!cols.some(c => c.key === 'rate')) {
+      const qIdx = cols.findIndex(c => c.key === 'quantity');
+      const insertIdx = qIdx >= 0 ? qIdx + 1 : cols.findIndex(c => c.key === 'completed');
+      const rateCols = [
+        { key: 'rate', label: 'Rate' },
+        { key: 'totalPrice', label: 'Total Price' },
+      ];
+      if (insertIdx >= 0) {
+        cols.splice(insertIdx, 0, ...rateCols);
+      } else {
+        cols.push(...rateCols);
+      }
+    }
+    return cols;
+  }, [columns]);
+
+  const getRowRate = (row) => {
+    if (row.rate != null && row.rate !== '') return Number(row.rate);
+    if (entryRates[row.id] != null) return Number(entryRates[row.id]);
+    return Number(workerRate) || 0;
+  };
+
+  const getRowTotalPrice = (row) => {
+    const rate = getRowRate(row);
+    const qty = Number(row.quantity != null && row.quantity !== '' ? row.quantity : (row.totalPiece || 0)) || 0;
+    return rate * qty;
+  };
+
+  const handleSaveRate = async (rowId, val) => {
+    const num = Math.max(0, Number(val) || 0);
+    const nextMap = { ...entryRates, [rowId]: num };
+    updateEntryRates(nextMap);
+    localStorage.setItem(`cm_entry_rates_${workerId}`, JSON.stringify(nextMap));
+    if (!workerRate || workerRate === 0) {
+      updateWorkerRate(num);
+      localStorage.setItem(`cm_worker_rate_${workerId}`, String(num));
+    }
+    if (workerId && num > 0) {
+      try {
+        await upsertWageRate({
+          workerId: Number(workerId),
+          taskType: 'Quantity',
+          ratePerPiece: num,
+        });
+      } catch {}
+    }
+    setEditingRateRowId(null);
+  };
+
+  const handleUpdateWorkerRate = async (val) => {
+    const num = Math.max(0, Number(val) || 0);
+    updateWorkerRate(num);
+    localStorage.setItem(`cm_worker_rate_${workerId}`, String(num));
+    if (workerId && num > 0) {
+      try {
+        await upsertWageRate({
+          workerId: Number(workerId),
+          taskType: 'Quantity',
+          ratePerPiece: num,
+        });
+      } catch {}
+    }
+  };
+
+  const getLotLatestDate = (rows) => {
+    let bestTime = null;
+    for (const r of rows) {
+      if (r.dateCompleted) {
+        const t = new Date(r.dateCompleted).getTime();
+        if (!isNaN(t)) {
+          if (bestTime === null || (dateSortDir === 'desc' ? t > bestTime : t < bestTime)) {
+            bestTime = t;
+          }
+        }
+      }
+    }
+    return bestTime;
+  };
+
   // Group entries by lot number
   const grouped = entries.reduce((acc, row) => {
     const lot = row.lotNumber || 'No Lot';
@@ -52,16 +182,57 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
     lot.toLowerCase().includes(lotSearch.toLowerCase())
   );
 
-  useEffect(() => { setLotPage(1); }, [lotSearch, lotPageSize]);
-  const paginatedLots = useMemo(() => filteredLots.slice((lotPage - 1) * lotPageSize, lotPage * lotPageSize), [filteredLots, lotPage, lotPageSize]);
+  // Order lot groups by Date Completed
+  const sortedLots = useMemo(() => {
+    return [...filteredLots].sort((lotA, lotB) => {
+      const rowsA = grouped[lotA] || [];
+      const rowsB = grouped[lotB] || [];
+      const dateA = getLotLatestDate(rowsA);
+      const dateB = getLotLatestDate(rowsB);
+
+      if (dateA === null && dateB === null) {
+        return lotB.localeCompare(lotA, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (dateA === null) return 1;
+      if (dateB === null) return -1;
+
+      const diff = dateSortDir === 'desc' ? dateB - dateA : dateA - dateB;
+      if (diff !== 0) return diff;
+      return lotB.localeCompare(lotA, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }, [filteredLots, grouped, dateSortDir]);
+
+  useEffect(() => { setLotPage(1); }, [lotSearch, lotPageSize, dateSortDir]);
+  const paginatedLots = useMemo(() => sortedLots.slice((lotPage - 1) * lotPageSize, lotPage * lotPageSize), [sortedLots, lotPage, lotPageSize]);
+
+  // Sort child rows inside each lot by Date Completed
+  const sortRowsByDate = (rows) => {
+    return [...rows].sort((a, b) => {
+      const tA = a.dateCompleted ? new Date(a.dateCompleted).getTime() : null;
+      const tB = b.dateCompleted ? new Date(b.dateCompleted).getTime() : null;
+      const validA = tA !== null && !isNaN(tA);
+      const validB = tB !== null && !isNaN(tB);
+
+      if (!validA && !validB) return (b.id || 0) - (a.id || 0);
+      if (!validA) return 1;
+      if (!validB) return -1;
+
+      const diff = dateSortDir === 'desc' ? tB - tA : tA - tB;
+      if (diff !== 0) return diff;
+      return (b.id || 0) - (a.id || 0);
+    });
+  };
 
   // Summary for a lot group
   const lotSummary = (rows) => {
-    const numCols = columns.filter(c => !['completed','dateCompleted','lotNumber','size','color','machine'].includes(c.key));
-    return numCols.map(c => {
+    const numCols = effectiveColumns.filter(c => !['completed','dateCompleted','lotNumber','size','color','machine','rate','totalPrice'].includes(c.key));
+    const stats = numCols.map(c => {
       const total = rows.reduce((s, r) => s + (Number(r[c.key]) || 0), 0);
       return { key: c.key, label: c.label, total };
     }).filter(x => x.total > 0);
+
+    const lotTotalPrice = rows.reduce((s, r) => s + getRowTotalPrice(r), 0);
+    return { stats, lotTotalPrice };
   };
 
   return (
@@ -76,13 +247,48 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
             onChange={e => setLotSearch(e.target.value)}
           />
           <span style={styles.countBadge}>
-            {filteredLots.length} lot{filteredLots.length !== 1 ? 's' : ''} · {entries.length} entries
+            {sortedLots.length} lot{sortedLots.length !== 1 ? 's' : ''} · {entries.length} entries
           </span>
           <span style={{ fontSize:12, color:'#888' }}>
-            Showing {filteredLots.length === 0 ? 0 : (lotPage - 1) * lotPageSize + 1}–{Math.min(lotPage * lotPageSize, filteredLots.length)} of {filteredLots.length}
+            Showing {sortedLots.length === 0 ? 0 : (lotPage - 1) * lotPageSize + 1}–{Math.min(lotPage * lotPageSize, sortedLots.length)} of {sortedLots.length}
           </span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Rate Setter */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            background: isDark ? '#1e293b' : '#f1f5f9',
+            padding: '5px 11px',
+            borderRadius: 8,
+            border: `1px solid ${isDark ? '#334155' : '#cbd5e1'}`,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: isDark ? '#cbd5e1' : '#475569' }}>🏷️ Rate:</span>
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={workerRate || ''}
+              placeholder="0"
+              onChange={e => handleUpdateWorkerRate(e.target.value)}
+              style={{
+                width: 60,
+                padding: '3px 6px',
+                fontSize: 12,
+                fontWeight: 700,
+                borderRadius: 6,
+                border: `1px solid ${isDark ? '#475569' : '#cbd5e1'}`,
+                background: isDark ? '#0f172a' : '#fff',
+                color: isDark ? '#f8fafc' : '#0f172a',
+                outline: 'none',
+                textAlign: 'center',
+              }}
+              title="Worker rate per piece (multiplies quantity for Total Price)"
+            />
+            <span style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#64748b' }}>/pc</span>
+          </div>
+
           <button
             type="button"
             onClick={() => setShowScanModal(true)}
@@ -128,7 +334,7 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
       {showForm && (
         <EntryForm
           workerId={workerId}
-          columns={columns}
+          columns={effectiveColumns}
           entry={editing}
           dropdowns={dropdowns}
           onSaved={handleSaved}
@@ -142,21 +348,48 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
           <thead>
             <tr>
               <th style={{ ...styles.th, width: 32 }}></th>
-              {columns.map(c => <th key={c.key} style={styles.th}>{c.label}</th>)}
+              {effectiveColumns.map(c => {
+                const isDateCol = c.key === 'dateCompleted';
+                return (
+                  <th
+                    key={c.key}
+                    style={{
+                      ...styles.th,
+                      cursor: isDateCol ? 'pointer' : 'default',
+                      userSelect: isDateCol ? 'none' : 'auto',
+                    }}
+                    onClick={() => {
+                      if (isDateCol) {
+                        setDateSortDir(d => d === 'desc' ? 'asc' : 'desc');
+                      }
+                    }}
+                    title={isDateCol ? `Order by Date Completed (${dateSortDir === 'desc' ? 'Newest first - Click to flip' : 'Oldest first - Click to flip'})` : undefined}
+                  >
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <span>{c.label}</span>
+                      {isDateCol && (
+                        <span style={{ fontSize: 11, color: '#38bdf8' }}>
+                          {dateSortDir === 'desc' ? '▼' : '▲'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                );
+              })}
               <th style={styles.th}>Picture</th>
               <th style={styles.th}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filteredLots.length === 0 ? (
+            {sortedLots.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + 3} style={styles.empty}>
+                <td colSpan={effectiveColumns.length + 3} style={styles.empty}>
                   {lotSearch ? `No lots matching "${lotSearch}"` : 'No entries yet'}
                 </td>
               </tr>
             ) : (
               paginatedLots.map(lot => {
-                const rows    = grouped[lot];
+                const rows    = grouped[lot] || [];
                 const isOpen  = !collapsed[lot];
                 const summary = lotSummary(rows);
 
@@ -166,7 +399,7 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
                     <td style={styles.chevronCell}>
                       <span style={{ ...styles.chevron, transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
                     </td>
-                    <td colSpan={columns.length + 2} style={styles.lotCell}>
+                    <td colSpan={effectiveColumns.length + 2} style={styles.lotCell}>
                       <div style={styles.lotHeader}>
                         <div style={styles.lotInfo}>
                           <span
@@ -214,12 +447,20 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
                           </span>
                         </div>
                         <div style={styles.lotStats}>
-                          {summary.map(s => (
+                          {summary.stats.map(s => (
                             <span key={s.key} style={styles.statPill}>
                               <span style={styles.statLabel}>{s.label}</span>
                               <strong style={styles.statVal}>{s.total}</strong>
                             </span>
                           ))}
+                          {summary.lotTotalPrice > 0 && (
+                            <span style={{ ...styles.statPill, background: '#dcfce7', border: '1px solid #86efac' }}>
+                              <span style={{ ...styles.statLabel, color: '#166534' }}>Total Price</span>
+                              <strong style={{ ...styles.statVal, color: '#15803d' }}>
+                                ₨ {summary.lotTotalPrice.toLocaleString()}
+                              </strong>
+                            </span>
+                          )}
                           <span style={styles.rowCount}>{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
                         </div>
                       </div>
@@ -227,31 +468,117 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
                   </tr>,
 
                   /* ── Child / Entry Rows ── */
-                  isOpen && rows.map((row, i) => (
+                  isOpen && sortRowsByDate(rows).map((row, i) => (
                     <tr key={row.id} style={{ ...styles.childRow, background: i % 2 === 0 ? '#fff' : '#f9fbff' }}>
                       <td style={styles.childIndent}></td>
-                      {columns.map(c => (
+                      {effectiveColumns.map(c => (
                         <td key={c.key} style={styles.td}>
-                          {c.key === 'completed'
-                            ? <span style={row[c.key] ? styles.yes : styles.no}>{row[c.key] ? '✓' : '✗'}</span>
-                            : c.key === 'dateCompleted'
-                            ? (row[c.key] ? new Date(row[c.key]).toLocaleDateString('en-PK') : '—')
-                            : c.key === 'lotNumber'
-                            ? (
-                              <span
-                                onClick={() => setSelectedLot({
-                                  id: row.lotId,
-                                  lotNumber: row.lotNumber,
-                                  sizeName: row.size,
-                                  material: row.lotMaterial,
-                                })}
-                                style={{ color: '#2563eb', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
-                                title="Click to see who worked on this lot"
-                              >
-                                {row[c.key] ?? '—'}
-                              </span>
+                          {c.key === 'completed' ? (
+                            <span style={row[c.key] ? styles.yes : styles.no}>{row[c.key] ? '✓' : '✗'}</span>
+                          ) : c.key === 'dateCompleted' ? (
+                            row[c.key] ? new Date(row[c.key]).toLocaleDateString('en-PK') : '—'
+                          ) : c.key === 'lotNumber' ? (
+                            <span
+                              onClick={() => setSelectedLot({
+                                id: row.lotId,
+                                lotNumber: row.lotNumber,
+                                sizeName: row.size,
+                                material: row.lotMaterial,
+                              })}
+                              style={{ color: '#2563eb', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                              title="Click to see who worked on this lot"
+                            >
+                              {row[c.key] ?? '—'}
+                            </span>
+                          ) : c.key === 'rate' ? (
+                            editingRateRowId === row.id ? (
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} onClick={e => e.stopPropagation()}>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  autoFocus
+                                  value={rateInputVal}
+                                  onChange={e => setRateInputVal(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleSaveRate(row.id, rateInputVal);
+                                    if (e.key === 'Escape') setEditingRateRowId(null);
+                                  }}
+                                  style={{
+                                    width: 65,
+                                    padding: '2px 5px',
+                                    fontSize: 12,
+                                    borderRadius: 4,
+                                    border: '1px solid #3b82f6',
+                                    outline: 'none',
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveRate(row.id, rateInputVal)}
+                                  style={{
+                                    background: '#16a34a',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    padding: '2px 6px',
+                                    fontSize: 11,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingRateRowId(null)}
+                                  style={{
+                                    background: '#ef4444',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    padding: '2px 6px',
+                                    fontSize: 11,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ fontWeight: 600, color: '#1d4ed8' }}>
+                                  {getRowRate(row) > 0 ? `₨ ${getRowRate(row)}` : '—'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingRateRowId(row.id);
+                                    setRateInputVal(String(getRowRate(row) || ''));
+                                  }}
+                                  title="Edit rate"
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: 11,
+                                    opacity: 0.5,
+                                    padding: '0 2px',
+                                  }}
+                                >
+                                  ✏️
+                                </button>
+                              </div>
                             )
-                            : (row[c.key] ?? '—')}
+                          ) : c.key === 'totalPrice' ? (
+                            <span style={{ fontWeight: 700, color: '#15803d' }}>
+                              {getRowTotalPrice(row) > 0
+                                ? `₨ ${getRowTotalPrice(row).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                                : '—'}
+                            </span>
+                          ) : (
+                            row[c.key] ?? '—'
+                          )}
                         </td>
                       ))}
                       <td style={styles.td}>
@@ -275,7 +602,7 @@ export default function WorkerTable({ workerId, columns, entries, reload, dropdo
           </tbody>
         </table>
       </div>
-      <WkrPagination page={lotPage} pageSize={lotPageSize} total={filteredLots.length} onPage={setLotPage} onPageSize={setLotPageSize} />
+      <WkrPagination page={lotPage} pageSize={lotPageSize} total={sortedLots.length} onPage={setLotPage} onPageSize={setLotPageSize} />
 
       {previewImg && (
         <div style={styles.imgOverlay} onClick={() => setPreviewImg(null)}>

@@ -224,7 +224,19 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
       dateCompleted: data.dateCompleted || null,
     };
     try {
-      entry ? await updateEntry(entry.id, payload) : await createEntry(payload);
+      const res = entry ? await updateEntry(entry.id, payload) : await createEntry(payload);
+      if (data.rate != null && data.rate !== '') {
+        const rateVal = Number(data.rate);
+        const savedId = entry?.id || res?.id;
+        if (savedId) {
+          try {
+            const entryRates = JSON.parse(localStorage.getItem(`cm_entry_rates_${workerId}`) || '{}');
+            entryRates[savedId] = rateVal;
+            localStorage.setItem(`cm_entry_rates_${workerId}`, JSON.stringify(entryRates));
+          } catch {}
+        }
+        localStorage.setItem(`cm_worker_rate_${workerId}`, String(rateVal));
+      }
       onSaved();
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Save failed.';
@@ -846,6 +858,31 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
         </span>
       </label>
     );
+    if (key === 'rate') return (
+      <input
+        key={key}
+        type="number"
+        step="0.5"
+        min={0}
+        {...register('rate')}
+        placeholder="Rate / pc (PKR)"
+        defaultValue={entry?.rate || localStorage.getItem(`cm_worker_rate_${workerId}`) || ''}
+        style={inputStyle}
+      />
+    );
+    if (key === 'totalPrice') {
+      const watchedRate = Number(watch('rate')) || Number(localStorage.getItem(`cm_worker_rate_${workerId}`)) || 0;
+      const watchedQty = Number(watch('quantity')) || Number(watch('totalPiece')) || 0;
+      const calcTotal = watchedRate * watchedQty;
+      return (
+        <div key={key} style={{ ...inputStyle, background: isDark ? 'var(--bg-subtle)' : '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#64748b' }}>Total Price:</span>
+          <span style={{ fontWeight: 700, color: '#16a34a', fontSize: 13 }}>
+            {calcTotal > 0 ? `₨ ${calcTotal.toLocaleString()}` : '—'}
+          </span>
+        </div>
+      );
+    }
     return <input type="number" {...register(key)} placeholder="0" style={inputStyle} min={0} />;
   };
 

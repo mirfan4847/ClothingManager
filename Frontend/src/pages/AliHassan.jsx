@@ -8,6 +8,8 @@ const COLUMNS = [
   { key: 'front',          label: 'Front' },
   { key: 'bazo',           label: 'Bazo' },
   { key: 'quantity',       label: 'Quantity' },
+  { key: 'rate',           label: 'Rate' },
+  { key: 'totalPrice',     label: 'Total Price' },
   { key: 'completed',      label: 'Completed' },
   { key: 'dateCompleted',  label: 'Date Completed' },
   { key: 'totalPiece',     label: 'Total Piece' },

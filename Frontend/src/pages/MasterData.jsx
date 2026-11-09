@@ -67,6 +67,17 @@ export default function MasterData() {
     const sizeName = (i.sizeName || '').toLowerCase();
     const q = search.toLowerCase();
     return val.includes(q) || sizeName.includes(q);
+  }).sort((a, b) => {
+    if (tab === 'lots') {
+      const numA = String(a.lotNumber || a.name || '').trim();
+      const numB = String(b.lotNumber || b.name || '').trim();
+      if (!numA && !numB) return (b.id || 0) - (a.id || 0);
+      if (!numA) return 1;
+      if (!numB) return -1;
+      const cmp = numB.localeCompare(numA, undefined, { numeric: true, sensitivity: 'base' });
+      return cmp !== 0 ? cmp : (b.id || 0) - (a.id || 0);
+    }
+    return 0;
   });
 
   const getLabel = (i) => i.name || i.lotNumber || '';

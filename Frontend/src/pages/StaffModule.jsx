@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useWorkerEntries, useDropdowns } from '../hooks/useHooks';
 import WorkerTable from '../components/WorkerTable';
-import { getAllWorkers } from '../services/api';
+import { getAllWorkers, getWageRates } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 
 // ── Column presets based on worker process / role ──
@@ -17,6 +17,8 @@ const GENERIC_COLS = [
   { key: 'lable',         label: 'Lable' },
   { key: 'moda',          label: 'Moda' },
   { key: 'quantity',      label: 'Quantity' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -27,6 +29,8 @@ const ALI_HASSAN_COLS = [
   { key: 'front',         label: 'Front' },
   { key: 'bazo',          label: 'Bazo' },
   { key: 'quantity',      label: 'Quantity' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -40,6 +44,8 @@ const FAIZAN_COLS = [
   { key: 'front',         label: 'Front' },
   { key: 'bazo',          label: 'Bazo' },
   { key: 'tape',          label: 'Tape' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -50,6 +56,8 @@ const GUJJAR_COLS = [
   { key: 'front',         label: 'Front' },
   { key: 'bazo',          label: 'Bazo' },
   { key: 'tape',          label: 'Tape' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -61,6 +69,8 @@ const FINISHING_COLS = [
   { key: 'gala',          label: 'Gala' },
   { key: 'lable',         label: 'Lable' },
   { key: 'moda',          label: 'Moda' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -69,6 +79,8 @@ const FINISHING_COLS = [
 const SAFTY_COLS = [
   { key: 'lotNumber',     label: 'Lot Number' },
   { key: 'quantity',      label: 'Quantity' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -77,6 +89,8 @@ const SAFTY_COLS = [
 const KAJ_BUTTON_COLS = [
   { key: 'lotNumber',     label: 'Lot Number' },
   { key: 'quantity',      label: 'Quantity' },
+  { key: 'rate',          label: 'Rate' },
+  { key: 'totalPrice',    label: 'Total Price' },
   { key: 'completed',     label: 'Completed' },
   { key: 'dateCompleted', label: 'Date Completed' },
   { key: 'totalPiece',    label: 'Total Piece' },
@@ -345,17 +359,50 @@ export default function StaffModule() {
     }
   };
 
-  // Quick stats for active worker
+  const [workerRate, setWorkerRate] = useState(0);
+  const [entryRates, setEntryRates] = useState({});
+
+  useEffect(() => {
+    if (!activeWorkerId) return;
+    const savedRate = localStorage.getItem(`cm_worker_rate_${activeWorkerId}`);
+    if (savedRate) setWorkerRate(Number(savedRate));
+    try {
+      setEntryRates(JSON.parse(localStorage.getItem(`cm_entry_rates_${activeWorkerId}`) || '{}'));
+    } catch {
+      setEntryRates({});
+    }
+
+    getWageRates(activeWorkerId).then(rates => {
+      if (Array.isArray(rates) && rates.length > 0) {
+        const r = rates.find(x => x.taskType?.toLowerCase() === 'quantity' || x.taskType?.toLowerCase() === 'cutting') || rates[0];
+        if (r && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
+          setWorkerRate(Number(r.ratePerPiece));
+          localStorage.setItem(`cm_worker_rate_${activeWorkerId}`, String(r.ratePerPiece));
+        }
+      }
+    }).catch(() => {});
+  }, [activeWorkerId]);
+
+  // Quick stats for active worker (including sum of all payments / total amount)
   const stats = useMemo(() => {
     if (!entries || entries.length === 0) {
-      return { totalEntries: 0, uniqueLots: 0, totalPieces: 0, completedPieces: 0 };
+      return { totalEntries: 0, uniqueLots: 0, totalPieces: 0, completedPieces: 0, totalAmount: 0 };
     }
     const totalEntries = entries.length;
     const uniqueLots = new Set(entries.map(e => e.lotNumber).filter(Boolean)).size;
     const totalPieces = entries.reduce((s, e) => s + (Number(e.totalPiece || e.quantity || 0) || 0), 0);
     const completedPieces = entries.reduce((s, e) => s + (Number(e.completed || 0) || 0), 0);
-    return { totalEntries, uniqueLots, totalPieces, completedPieces };
-  }, [entries]);
+
+    const totalAmount = entries.reduce((sum, e) => {
+      const rowRate = e.rate != null && e.rate !== '' 
+        ? Number(e.rate) 
+        : (entryRates[e.id] != null ? Number(entryRates[e.id]) : Number(workerRate || 0));
+      const qty = Number(e.quantity != null && e.quantity !== '' ? e.quantity : (e.totalPiece || 0)) || 0;
+      return sum + (rowRate * qty);
+    }, 0);
+
+    return { totalEntries, uniqueLots, totalPieces, completedPieces, totalAmount };
+  }, [entries, workerRate, entryRates]);
 
   // ─────────────────────────────────────────────────────────────
   // VIEW 1: WHOLE SCREEN STAFF TABS DIRECTORY (when !id)
@@ -639,6 +686,12 @@ export default function StaffModule() {
             <div style={{ ...styles.statNumber, color: '#86efac' }}>{stats.completedPieces.toLocaleString()}</div>
             <div style={styles.statLabel}>Completed</div>
           </div>
+          <div style={{ ...styles.statCard, background: 'rgba(255, 255, 255, 0.22)', border: '1px solid rgba(255, 255, 255, 0.35)', minWidth: 80 }}>
+            <div style={{ ...styles.statNumber, color: '#fef08a' }}>
+              ₨ {stats.totalAmount.toLocaleString()}
+            </div>
+            <div style={{ ...styles.statLabel, color: '#fef9c3', fontWeight: 700 }}>Total Amount</div>
+          </div>
         </div>
       </div>
 
@@ -657,6 +710,10 @@ export default function StaffModule() {
             entries={entries}
             reload={reloadEntries}
             dropdowns={dropdowns}
+            workerRate={workerRate}
+            onWorkerRateChange={setWorkerRate}
+            entryRates={entryRates}
+            onEntryRatesChange={setEntryRates}
           />
         )}
       </div>
