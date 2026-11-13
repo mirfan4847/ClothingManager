@@ -1,22 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
-import api, {
-  getAllStaff, getWageRates, upsertWageRate, deleteWageRate,
-  calculateWages, calculateAllWages, getWageSummary, getWagePayments,
+import {
+  getAllStaff,
+  getEntries,
+  getWageRates,
+  getWageSummary, getWagePayments,
   createWagePayment, deleteWagePayment,
   getAdvances, createAdvance, settleAdvance, deleteAdvance, getAdvanceBalance,
   syncPayrollToFinance, cleanupFinanceDuplicates,
 } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import { calculateWorkerWagesFromEntries, getEffectiveNetAmount, getEffectivePaidDate } from '../utils/wageUtils';
 
 const TABS = [
   { key: 'Overview',   icon: '📊', label: 'Overview' },
-  { key: 'Wage Rates', icon: '🏷️', label: 'Wage Rates' },
   { key: 'Calculate',  icon: '🧮', label: 'Calculate' },
   { key: 'Advances',   icon: '💳', label: 'Advances' },
   { key: 'Reports',    icon: '📈', label: 'Reports' },
 ];
 
-const fmt     = (n) => 'PKR ' + Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 2 });
+const fmt     = (n) => 'PKR ' + Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PK') : '—';
 const today        = () => new Date().toISOString().split('T')[0];
 const firstOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().split('T')[0]; };
@@ -69,7 +71,6 @@ export default function WageModule() {
 
   const [tab, setTab]         = useState('Overview');
   const [workers, setWorkers] = useState([]);
-  const [rates, setRates]     = useState([]);
   const [summary, setSummary] = useState(null);
   const [payments, setPayments] = useState([]);
   const [advances, setAdvances] = useState([]);
@@ -95,16 +96,6 @@ export default function WageModule() {
       showCancel: true,
     });
   };
-
-  // Wage Rates form
-  const [rateForm, setRateForm]               = useState({ workerId: '', taskType: '', ratePerPiece: '' });
-  const [rateWorkerFilter, setRateWorkerFilter] = useState('');
-  const [taskTypes, setTaskTypes]             = useState(['Front', 'Bazo', 'Tape', 'Pocket', 'Gala', 'Lable', 'Moda', 'Quantity', 'TotalPiece']);
-
-  const allTaskTypes = Array.from(new Set([
-    ...taskTypes,
-    ...rates.map(r => r.taskType).filter(Boolean),
-  ]));
 
   // Calculate (single worker)
   const [calcForm, setCalcForm]       = useState({ workerId: '', from: firstOfMonth(), to: today() });
@@ -138,14 +129,10 @@ export default function WageModule() {
     setLoading(true);
     setError('');
     try {
-      const [ws, rs, sum, pmts, advs, ttRes] = await Promise.all([
-        getAllStaff(), getWageRates(), getWageSummary(), getWagePayments({}), getAdvances({}),
-        api.get('/dropdowns/task-types').then(r => r.data).catch(() => []),
+      const [ws, sum, pmts, advs] = await Promise.all([
+        getAllStaff(), getWageSummary(), getWagePayments({}), getAdvances({}),
       ]);
-      setWorkers(ws); setRates(rs); setSummary(sum); setPayments(pmts); setAdvances(advs);
-      if (Array.isArray(ttRes) && ttRes.length > 0) {
-        setTaskTypes(ttRes.map(t => t.name).filter(Boolean));
-      }
+      setWorkers(ws); setSummary(sum); setPayments(pmts); setAdvances(advs);
     } catch {
       setError('Failed to load data. Ensure the backend is running.');
     }
@@ -153,31 +140,6 @@ export default function WageModule() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
-
-  // ── Wage Rate handlers ──────────────────────────────────────────────────
-
-  const handleRateSubmit = async () => {
-    if (!rateForm.workerId || !rateForm.taskType || !rateForm.ratePerPiece) return;
-    setSaving(true);
-    try {
-      await upsertWageRate({
-        workerId: Number(rateForm.workerId),
-        taskType: rateForm.taskType,
-        ratePerPiece: Number(rateForm.ratePerPiece),
-      });
-      setRateForm({ workerId: '', taskType: '', ratePerPiece: '' });
-      setRates(await getWageRates());
-    } catch { setError('Failed to save rate.'); }
-    setSaving(false);
-  };
-
-  const handleDeleteRate = async (id) => {
-    try {
-      await deleteWageRate(id);
-      setRates(r => r.filter(x => x.id !== id));
-    } catch { setError('Failed to delete rate.'); }
-    setDeleteConfirm(null);
-  };
 
   // ── Calculate handlers ──────────────────────────────────────────────────
 
@@ -188,10 +150,25 @@ export default function WageModule() {
     setShowPayForm(false);
     try {
       const wid = Number(calcForm.workerId);
-      const [result, adv] = await Promise.all([
-        calculateWages(wid, calcForm.from, calcForm.to),
+      const worker = workers.find(w => w.id === wid);
+      const [entries, rates, adv] = await Promise.all([
+        getEntries(wid),
+        getWageRates(wid),
         getAdvanceBalance(wid),
       ]);
+      const { grossAmount, breakdown } = calculateWorkerWagesFromEntries(wid, entries, rates, {
+        from: calcForm.from,
+        to: calcForm.to,
+      });
+      const result = {
+        workerId: wid,
+        workerName: worker?.name || 'Worker',
+        workerPhone: worker?.phone || '',
+        periodFrom: calcForm.from,
+        periodTo: calcForm.to,
+        grossAmount,
+        breakdown,
+      };
       setCalcResult(result);
       setAdvBalance(adv);
       setPayAmount(String(result.grossAmount));
@@ -245,12 +222,15 @@ export default function WageModule() {
     try {
       const gross = Number(payAmount) || 0;
       const ded   = Number(payDeduction) || 0;
+      const net   = Math.max(0, gross - ded);
       const created = await createWagePayment({
         workerId:    calcResult.workerId,
         periodFrom:  new Date(calcForm.from).toISOString(),
         periodTo:    new Date(calcForm.to).toISOString(),
+        paidAt:      new Date().toISOString(),
         grossAmount: gross,
         deductions:  ded,
+        netAmount:   net,
         notes:       payNotes || null,
         recordAsAdvance: payAsAdvance,
       });
@@ -351,8 +331,26 @@ export default function WageModule() {
     setReportResult(null);
     setExpandedWorker(null);
     try {
-      const result = await calculateAllWages(reportForm.from, reportForm.to);
-      setReportResult(result);
+      const activeWorkers = workers.filter(w => w.isActive !== false);
+      const allRates = await getWageRates();
+      const rows = await Promise.all(
+        activeWorkers.map(async w => {
+          const entries = await getEntries(w.id).catch(() => []);
+          const workerRates = (allRates || []).filter(r => r.workerId === w.id);
+          const { grossAmount, breakdown } = calculateWorkerWagesFromEntries(w.id, entries, workerRates, {
+            from: reportForm.from,
+            to: reportForm.to,
+          });
+          return {
+            workerId: w.id,
+            workerName: w.name,
+            workerPhone: w.phone || '',
+            grossAmount,
+            breakdown,
+          };
+        })
+      );
+      setReportResult(rows.filter(r => r.grossAmount > 0).sort((a, b) => b.grossAmount - a.grossAmount));
     } catch { setError('Report calculation failed.'); }
     setReportLoading(false);
   };
@@ -365,10 +363,6 @@ export default function WageModule() {
     if (payFilter.to   && new Date(p.paidAt) > new Date(payFilter.to))   return false;
     return true;
   });
-
-  const filteredRates = rateWorkerFilter
-    ? rates.filter(r => r.workerId === Number(rateWorkerFilter))
-    : rates;
 
   const filteredAdvances = advances.filter(a => {
     if (advWorkerFilter && a.workerId !== Number(advWorkerFilter)) return false;
@@ -460,7 +454,7 @@ export default function WageModule() {
               <BtKpiCard
                 label="Total Net Paid"
                 tag="NET DISBURSED"
-                value={fmt(summary.totalNet)}
+                value={fmt(payments.length > 0 ? payments.reduce((s, p) => s + getEffectiveNetAmount(p), 0) : summary.totalNet)}
                 gradient="linear-gradient(135deg, #146c43 0%, #198754 100%)"
                 glow="rgba(25, 135, 84, 0.35)"
                 icon="✅"
@@ -579,10 +573,10 @@ export default function WageModule() {
                             {fmt(p.deductions)}
                           </td>
                           <td style={{ ...styles.td(isDark), color: BT.success, fontWeight: 800 }}>
-                            {fmt(p.netAmount)}
+                            {fmt(getEffectiveNetAmount(p))}
                           </td>
                           <td style={styles.td(isDark)}>
-                            {fmtDate(p.paidAt)}
+                            {fmtDate(getEffectivePaidDate(p))}
                           </td>
                           <td style={styles.td(isDark)}>
                             <button
@@ -593,10 +587,10 @@ export default function WageModule() {
                                 phone:       p.workerPhone,
                                 grossAmount: p.grossAmount,
                                 deductions:  p.deductions,
-                                netAmount:   p.netAmount,
+                                netAmount:   getEffectiveNetAmount(p),
                                 periodFrom:  p.periodFrom,
                                 periodTo:    p.periodTo,
-                                paidAt:      p.paidAt,
+                                paidAt:      getEffectivePaidDate(p),
                                 notes:       p.notes,
                                 isAdvance:   false,
                               })}
@@ -615,134 +609,7 @@ export default function WageModule() {
           </div>
         )}
 
-        {/* ── 2. WAGE RATES TAB ───────────────────────────────────────── */}
-        {tab === 'Wage Rates' && (
-          <div>
-            {/* Form Card */}
-            <div style={styles.cardBox(isDark)}>
-              <div style={styles.cardHeader(isDark)}>
-                <span style={{ fontWeight: 800, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  🏷️ Set Worker Piece Rate
-                </span>
-              </div>
-              <div style={{ padding: '16px 20px' }}>
-                <div style={styles.formRow}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 180 }}>
-                    <label style={styles.label(isDark)}>Worker</label>
-                    <select
-                      style={styles.select(isDark)}
-                      value={rateForm.workerId}
-                      onChange={e => setRateForm(f => ({ ...f, workerId: e.target.value }))}
-                    >
-                      <option value="">— Select Worker —</option>
-                      {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 180 }}>
-                    <label style={styles.label(isDark)}>Task Type</label>
-                    <select
-                      style={styles.select(isDark)}
-                      value={rateForm.taskType}
-                      onChange={e => setRateForm(f => ({ ...f, taskType: e.target.value }))}
-                    >
-                      <option value="">— Select Task —</option>
-                      {allTaskTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 160 }}>
-                    <label style={styles.label(isDark)}>Rate per Piece (PKR)</label>
-                    <input
-                      style={styles.input(isDark)}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="e.g. 5.50"
-                      value={rateForm.ratePerPiece}
-                      onChange={e => setRateForm(f => ({ ...f, ratePerPiece: e.target.value }))}
-                    />
-                  </div>
-
-                  <button
-                    style={styles.btnPrimary}
-                    onClick={handleRateSubmit}
-                    disabled={saving}
-                  >
-                    {saving ? 'Saving…' : '+ Save Rate'}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Filter toolbar */}
-            <div style={styles.filterToolbar(isDark)}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: isDark ? 'var(--text-main)' : '#495057' }}>
-                  Filter by worker:
-                </span>
-                <select
-                  style={{ ...styles.select(isDark), maxWidth: 220 }}
-                  value={rateWorkerFilter}
-                  onChange={e => setRateWorkerFilter(e.target.value)}
-                >
-                  <option value="">All Workers</option>
-                  {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                </select>
-              </div>
-              <span style={styles.countBadge}>
-                {filteredRates.length} configured rates
-              </span>
-            </div>
-
-            {/* Rates Table */}
-            <div style={styles.cardBox(isDark)}>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      {['Worker', 'Task Type', 'Rate / Piece', 'Last Updated', 'Actions'].map(h => (
-                        <th key={h} style={styles.th(isDark)}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRates.length === 0 ? (
-                      <tr><td colSpan={5} style={styles.empty(isDark)}>No piece rates configured.</td></tr>
-                    ) : (
-                      filteredRates.map((r, i) => (
-                        <tr key={r.id} style={styles.tr(isDark, i % 2 === 0)}>
-                          <td style={styles.td(isDark)}><strong>{r.workerName}</strong></td>
-                          <td style={styles.td(isDark)}>
-                            <span style={styles.taskBadge}>{r.taskType}</span>
-                          </td>
-                          <td style={{ ...styles.td(isDark), fontWeight: 800, color: BT.primary }}>
-                            {fmt(r.ratePerPiece)}
-                          </td>
-                          <td style={styles.td(isDark)}>{fmtDate(r.updatedAt)}</td>
-                          <td style={styles.td(isDark)}>
-                            {deleteConfirm === `rate-${r.id}` ? (
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button style={styles.btnDangerSm} onClick={() => handleDeleteRate(r.id)}>Confirm</button>
-                                <button style={styles.btnSecondarySm} onClick={() => setDeleteConfirm(null)}>Cancel</button>
-                              </div>
-                            ) : (
-                              <button style={styles.iconBtn} onClick={() => setDeleteConfirm(`rate-${r.id}`)} title="Delete Rate">
-                                🗑️
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── 3. CALCULATE TAB ────────────────────────────────────────── */}
+        {/* ── 2. CALCULATE TAB ────────────────────────────────────────── */}
         {tab === 'Calculate' && (
           <div>
             <div style={styles.cardBox(isDark)}>
@@ -985,8 +852,8 @@ export default function WageModule() {
                             <td style={styles.td(isDark)}>{fmtDate(p.periodFrom)} – {fmtDate(p.periodTo)}</td>
                             <td style={styles.td(isDark)}>{fmt(p.grossAmount)}</td>
                             <td style={{ ...styles.td(isDark), color: BT.danger }}>{fmt(p.deductions)}</td>
-                            <td style={{ ...styles.td(isDark), color: BT.success, fontWeight: 700 }}>{fmt(p.netAmount)}</td>
-                            <td style={styles.td(isDark)}>{fmtDate(p.paidAt)}</td>
+                            <td style={{ ...styles.td(isDark), color: BT.success, fontWeight: 700 }}>{fmt(getEffectiveNetAmount(p))}</td>
+                            <td style={styles.td(isDark)}>{fmtDate(getEffectivePaidDate(p))}</td>
                             <td style={styles.td(isDark)}>{p.notes || '—'}</td>
                             <td style={styles.td(isDark)}>
                               <button
@@ -997,10 +864,10 @@ export default function WageModule() {
                                   phone:       p.workerPhone,
                                   grossAmount: p.grossAmount,
                                   deductions:  p.deductions,
-                                  netAmount:   p.netAmount,
+                                  netAmount:   getEffectiveNetAmount(p),
                                   periodFrom:  p.periodFrom,
                                   periodTo:    p.periodTo,
-                                  paidAt:      p.paidAt,
+                                  paidAt:      getEffectivePaidDate(p),
                                   notes:       p.notes,
                                   isAdvance:   false,
                                 })}

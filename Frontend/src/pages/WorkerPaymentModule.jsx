@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   getAllStaff,
-  calculateWages,
+  getEntries,
+  getWageRates,
   getWageSummary,
   getWagePayments,
   createWagePayment,
@@ -10,8 +11,9 @@ import {
   createAdvance,
 } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import { calculateWorkerWagesFromEntries, getEffectiveNetAmount, getEffectivePaidDate } from '../utils/wageUtils';
 
-const fmt = (n) => 'PKR ' + Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 2 });
+const fmt = (n) => 'PKR ' + Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-PK') : '—');
 const today = () => new Date().toISOString().split('T')[0];
 const firstOfMonth = () => {
@@ -122,11 +124,12 @@ export default function WorkerPaymentModule() {
     setStatsLoading(true);
 
     Promise.all([
-      calculateWages(wid, '2020-01-01', today()).catch(() => null),
+      getEntries(wid).catch(() => []),
+      getWageRates(wid).catch(() => []),
       getAdvanceBalance(wid).catch(() => null),
-    ]).then(([calc, adv]) => {
+    ]).then(([entries, rates, adv]) => {
       if (cancelled) return;
-      const totalEarned = calc?.grossAmount || 0;
+      const { grossAmount: totalEarned, breakdown } = calculateWorkerWagesFromEntries(wid, entries, rates);
       const totalAlreadyPaid = payments
         .filter(p => p.workerId === wid)
         .reduce((s, p) => s + (Number(p.grossAmount) || 0), 0);
@@ -138,14 +141,11 @@ export default function WorkerPaymentModule() {
         totalAlreadyPaid,
         remainingDue,
         pendingAdvance,
+        breakdown,
       });
 
-      if (remainingDue > 0) {
-        setPayAmount(String(remainingDue));
-      } else {
-        setPayAmount('');
-      }
-      setPayDeduction(pendingAdvance > 0 ? String(Math.min(pendingAdvance, remainingDue || pendingAdvance)) : '0');
+      setPayAmount('');
+      setPayDeduction('0');
       setStatsLoading(false);
     });
 
@@ -218,16 +218,19 @@ export default function WorkerPaymentModule() {
         });
       } else {
         const ded = Number(payDeduction) || 0;
+        const netPaid = Math.max(0, gross - ded);
         const created = await createWagePayment({
           workerId: wid,
           periodFrom: new Date(firstOfMonth()).toISOString(),
           periodTo: new Date(payDate || today()).toISOString(),
+          paidAt: new Date(payDate || today()).toISOString(),
           grossAmount: gross,
           deductions: ded,
+          netAmount: netPaid,
           notes: payNotes || null,
           recordAsAdvance: false,
         });
-        setSuccessMsg(`Payment of ${fmt(gross - ded)} disbursed to ${worker?.name || 'Worker'}.`);
+        setSuccessMsg(`Payment of ${fmt(netPaid)} disbursed to ${worker?.name || 'Worker'}.`);
         setPayAmount('');
         setPayDeduction('0');
         setPayNotes('');
@@ -262,16 +265,23 @@ export default function WorkerPaymentModule() {
   };
 
   const filteredPayments = useMemo(() => {
-    return payments.filter(p => {
-      if (filterWorkerId && p.workerId !== Number(filterWorkerId)) return false;
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const matchName = (p.workerName || '').toLowerCase().includes(q);
-        const matchNotes = (p.notes || '').toLowerCase().includes(q);
-        if (!matchName && !matchNotes) return false;
-      }
-      return true;
-    });
+    return payments
+      .filter(p => {
+        if (filterWorkerId && p.workerId !== Number(filterWorkerId)) return false;
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          const matchName = (p.workerName || '').toLowerCase().includes(q);
+          const matchNotes = (p.notes || '').toLowerCase().includes(q);
+          if (!matchName && !matchNotes) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const tA = new Date(getEffectivePaidDate(a) || 0).getTime() || 0;
+        const tB = new Date(getEffectivePaidDate(b) || 0).getTime() || 0;
+        if (tB !== tA) return tB - tA;
+        return (b.id || 0) - (a.id || 0);
+      });
   }, [payments, filterWorkerId, searchQuery]);
 
   if (loading) {
@@ -323,7 +333,7 @@ export default function WorkerPaymentModule() {
           <KpiCard
             label="Total Net Disbursed"
             tag="NET PAID TO WORKERS"
-            value={fmt(summary.totalNet)}
+            value={fmt(payments.length > 0 ? payments.reduce((s, p) => s + getEffectiveNetAmount(p), 0) : summary.totalNet)}
             gradient="linear-gradient(135deg, #146c43 0%, #198754 100%)"
             icon="✅"
           />
@@ -388,25 +398,49 @@ export default function WorkerPaymentModule() {
                 <span style={{ fontSize: 12.5, color: '#64748b' }}>⏳ Checking worker balance…</span>
               ) : workerStats ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, width: '100%' }}>
-                  <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div>
-                      <span style={styles.stripLabel}>Total Earned: </span>
-                      <strong style={{ color: BT.primary }}>{fmt(workerStats.totalEarned)}</strong>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <div>
+                        <span style={styles.stripLabel}>Total Earned: </span>
+                        <strong style={{ color: BT.primary }}>{fmt(workerStats.totalEarned)}</strong>
+                      </div>
+                      <div>
+                        <span style={styles.stripLabel}>Already Paid: </span>
+                        <strong style={{ color: BT.secondary }}>{fmt(workerStats.totalAlreadyPaid)}</strong>
+                      </div>
+                      <div>
+                        <span style={styles.stripLabel}>Remaining Unpaid Wages: </span>
+                        <strong style={{ color: BT.success, fontSize: 14 }}>{fmt(workerStats.remainingDue)}</strong>
+                      </div>
+                      <div>
+                        <span style={styles.stripLabel}>Pending Advance: </span>
+                        <strong style={{ color: workerStats.pendingAdvance > 0 ? BT.danger : BT.secondary }}>
+                          {fmt(workerStats.pendingAdvance)}
+                        </strong>
+                      </div>
                     </div>
-                    <div>
-                      <span style={styles.stripLabel}>Already Paid: </span>
-                      <strong style={{ color: BT.secondary }}>{fmt(workerStats.totalAlreadyPaid)}</strong>
-                    </div>
-                    <div>
-                      <span style={styles.stripLabel}>Remaining Unpaid Wages: </span>
-                      <strong style={{ color: BT.success, fontSize: 14 }}>{fmt(workerStats.remainingDue)}</strong>
-                    </div>
-                    <div>
-                      <span style={styles.stripLabel}>Pending Advance: </span>
-                      <strong style={{ color: workerStats.pendingAdvance > 0 ? BT.danger : BT.secondary }}>
-                        {fmt(workerStats.pendingAdvance)}
-                      </strong>
-                    </div>
+
+                    {workerStats.breakdown?.length > 0 && (
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: '#64748b' }}>Breakdown:</span>
+                        {workerStats.breakdown.map(b => (
+                          <span
+                            key={`${b.taskType}-${b.ratePerPiece}`}
+                            style={{
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                              background: isDark ? 'rgba(37,99,235,0.18)' : '#eff6ff',
+                              border: `1px solid ${isDark ? '#1e40af' : '#bfdbfe'}`,
+                              color: isDark ? '#93c5fd' : '#1d4ed8',
+                            }}
+                          >
+                            {b.taskType}: {b.totalPieces.toLocaleString()} pcs × ₨ {b.ratePerPiece} = {fmt(b.amount)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {workerStats.remainingDue > 0 && paymentType === 'wage' && (
@@ -593,13 +627,13 @@ export default function WorkerPaymentModule() {
                     <td style={styles.td(isDark)}>
                       <strong>{p.workerName}</strong>
                     </td>
-                    <td style={styles.td(isDark)}>{fmtDate(p.paidAt)}</td>
+                    <td style={styles.td(isDark)}>{fmtDate(getEffectivePaidDate(p))}</td>
                     <td style={{ ...styles.td(isDark), fontWeight: 600 }}>{fmt(p.grossAmount)}</td>
                     <td style={{ ...styles.td(isDark), color: BT.danger, fontWeight: 700 }}>
                       {Number(p.deductions) > 0 ? fmt(p.deductions) : '—'}
                     </td>
                     <td style={{ ...styles.td(isDark), color: BT.success, fontWeight: 800 }}>
-                      {fmt(p.netAmount)}
+                      {fmt(getEffectiveNetAmount(p))}
                     </td>
                     <td style={{ ...styles.td(isDark), color: isDark ? '#94a3b8' : '#64748b' }}>
                       {p.notes || '—'}
@@ -615,8 +649,8 @@ export default function WorkerPaymentModule() {
                             phone: p.workerPhone,
                             grossAmount: p.grossAmount,
                             deductions: p.deductions,
-                            netAmount: p.netAmount,
-                            paidAt: p.paidAt,
+                            netAmount: getEffectiveNetAmount(p),
+                            paidAt: getEffectivePaidDate(p),
                             notes: p.notes,
                             isAdvance: false,
                           })}

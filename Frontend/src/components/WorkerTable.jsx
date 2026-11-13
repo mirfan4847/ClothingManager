@@ -4,6 +4,7 @@ import EntryForm from './EntryForm';
 import LotHistoryModal from './LotHistoryModal';
 import AiSlipScannerModal from './AiSlipScannerModal';
 import { useTheme } from '../context/ThemeContext';
+import { calculateEntryTotalPrice, getEntryDisplayRate, getEntryRateBreakdown, buildAssignedTaskColumns } from '../utils/wageUtils';
 
 export default function WorkerTable({
   workerId,
@@ -15,6 +16,9 @@ export default function WorkerTable({
   onWorkerRateChange,
   entryRates: externalEntryRates,
   onEntryRatesChange,
+  wageRates: externalWageRates,
+  taskRatesMap: externalTaskRatesMap,
+  primaryTaskType: externalPrimaryTaskType,
 }) {
   const { isDark } = useTheme();
   const [editing, setEditing]       = useState(null);
@@ -35,13 +39,49 @@ export default function WorkerTable({
   });
   const [internalEntryRates, setInternalEntryRates] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem(`cm_entry_rates_${workerId}`) || '{}');
+      return JSON.parse(localStorage.getItem(`cm_entry_manual_rates_${workerId}`) || '{}');
     } catch {
       return {};
     }
   });
   const [editingRateRowId, setEditingRateRowId] = useState(null);
   const [rateInputVal, setRateInputVal]         = useState('');
+
+  const [internalWageRates, setInternalWageRates] = useState([]);
+
+  useEffect(() => {
+    if (workerId && (!externalWageRates || externalWageRates.length === 0)) {
+      getWageRates(workerId)
+        .then(rates => {
+          if (Array.isArray(rates)) setInternalWageRates(rates);
+        })
+        .catch(() => {});
+    }
+  }, [workerId, externalWageRates]);
+
+  const effectiveWageRates = (externalWageRates && externalWageRates.length > 0)
+    ? externalWageRates
+    : internalWageRates;
+
+  const effectiveTaskRatesMap = useMemo(() => {
+    if (externalTaskRatesMap && Object.keys(externalTaskRatesMap).length > 0) {
+      return externalTaskRatesMap;
+    }
+    const map = {};
+    effectiveWageRates.forEach(r => {
+      if (r.taskType && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
+        map[r.taskType.trim().toLowerCase()] = Number(r.ratePerPiece);
+      }
+    });
+    return map;
+  }, [externalTaskRatesMap, effectiveWageRates]);
+
+  const primaryTaskType = useMemo(() => {
+    if (externalPrimaryTaskType) return externalPrimaryTaskType;
+    if (effectiveWageRates.length === 0) return '';
+    const q = effectiveWageRates.find(r => r.taskType?.toLowerCase() === 'quantity');
+    return q?.taskType || effectiveWageRates[0]?.taskType || '';
+  }, [externalPrimaryTaskType, effectiveWageRates]);
 
   const workerRate = externalWorkerRate !== undefined ? externalWorkerRate : internalWorkerRate;
   const entryRates = externalEntryRates !== undefined ? externalEntryRates : internalEntryRates;
@@ -59,17 +99,15 @@ export default function WorkerTable({
   useEffect(() => {
     getWorkers().then(setAllWorkers).catch(() => {});
     if (workerId && externalWorkerRate === undefined) {
-      getWageRates(workerId).then(rates => {
-        if (Array.isArray(rates) && rates.length > 0) {
-          const r = rates.find(x => x.taskType?.toLowerCase() === 'quantity' || x.taskType?.toLowerCase() === 'cutting') || rates[0];
-          if (r && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
-            updateWorkerRate(Number(r.ratePerPiece));
-            localStorage.setItem(`cm_worker_rate_${workerId}`, String(r.ratePerPiece));
-          }
+      if (effectiveWageRates.length > 0) {
+        const r = effectiveWageRates.find(x => x.taskType?.toLowerCase() === 'quantity' || x.taskType?.toLowerCase() === 'cutting') || effectiveWageRates[0];
+        if (r && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
+          updateWorkerRate(Number(r.ratePerPiece));
+          localStorage.setItem(`cm_worker_rate_${workerId}`, String(r.ratePerPiece));
         }
-      }).catch(() => {});
+      }
     }
-  }, [workerId, externalWorkerRate]);
+  }, [workerId, externalWorkerRate, effectiveWageRates]);
 
   const handleDelete = async (id) => {
     setDeleteConfirmId(id);
@@ -87,43 +125,60 @@ export default function WorkerTable({
 
   const toggleLot = (lot) => setCollapsed(c => ({ ...c, [lot]: !c[lot] }));
 
-  // Ensure Rate and Total Price columns are present
-  const effectiveColumns = useMemo(() => {
-    let cols = [...columns];
-    if (!cols.some(c => c.key === 'rate')) {
-      const qIdx = cols.findIndex(c => c.key === 'quantity');
-      const insertIdx = qIdx >= 0 ? qIdx + 1 : cols.findIndex(c => c.key === 'completed');
-      const rateCols = [
-        { key: 'rate', label: 'Rate' },
-        { key: 'totalPrice', label: 'Total Price' },
-      ];
-      if (insertIdx >= 0) {
-        cols.splice(insertIdx, 0, ...rateCols);
-      } else {
-        cols.push(...rateCols);
-      }
+  // Load any custom task breakdowns saved for entries of this worker
+  const customTasksByEntry = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`cm_entry_custom_tasks_${workerId}`) || '{}');
+    } catch {
+      return {};
     }
-    return cols;
-  }, [columns]);
+  }, [workerId, entries]);
+
+  // Generic grid columns based on assigned Payroll task types + default columns
+  const effectiveColumns = useMemo(() => {
+    return [
+      { key: 'lotNumber', label: 'Lot Number' },
+      ...buildAssignedTaskColumns(effectiveWageRates),
+      { key: 'rate', label: 'Rate' },
+      { key: 'totalPrice', label: 'Total Price' },
+      { key: 'completed', label: 'Completed' },
+      { key: 'dateCompleted', label: 'Date Completed' },
+    ];
+  }, [effectiveWageRates]);
+
+  const getRowManualRate = (row) => {
+    const val = entryRates[row.id];
+    return val != null && val !== '' && Number(val) > 0 ? Number(val) : null;
+  };
+
+  const getRowRateBreakdown = (row) => {
+    return getEntryRateBreakdown(row, effectiveTaskRatesMap, customTasksByEntry[row.id]);
+  };
 
   const getRowRate = (row) => {
-    if (row.rate != null && row.rate !== '') return Number(row.rate);
-    if (entryRates[row.id] != null) return Number(entryRates[row.id]);
-    return Number(workerRate) || 0;
+    return getEntryDisplayRate(row, effectiveTaskRatesMap, workerRate, customTasksByEntry[row.id], getRowManualRate(row));
   };
 
   const getRowTotalPrice = (row) => {
-    const rate = getRowRate(row);
-    const qty = Number(row.quantity != null && row.quantity !== '' ? row.quantity : (row.totalPiece || 0)) || 0;
-    return rate * qty;
+    return calculateEntryTotalPrice(row, effectiveTaskRatesMap, workerRate, customTasksByEntry[row.id], getRowManualRate(row));
   };
 
   const handleSaveRate = async (rowId, val) => {
-    const num = Math.max(0, Number(val) || 0);
-    const nextMap = { ...entryRates, [rowId]: num };
+    const num = Number(val);
+    const nextMap = { ...entryRates };
+    if (val === '' || val == null || isNaN(num) || num <= 0) {
+      delete nextMap[rowId];
+    } else {
+      nextMap[rowId] = num;
+    }
     updateEntryRates(nextMap);
-    localStorage.setItem(`cm_entry_rates_${workerId}`, JSON.stringify(nextMap));
-    if (!workerRate || workerRate === 0) {
+    localStorage.setItem(`cm_entry_manual_rates_${workerId}`, JSON.stringify(nextMap));
+    setEditingRateRowId(null);
+  };
+
+  const handleUpdateTaskWageRate = async (taskType, val) => {
+    const num = Math.max(0, Number(val) || 0);
+    if (taskType === primaryTaskType || effectiveWageRates.length <= 1) {
       updateWorkerRate(num);
       localStorage.setItem(`cm_worker_rate_${workerId}`, String(num));
     }
@@ -131,27 +186,18 @@ export default function WorkerTable({
       try {
         await upsertWageRate({
           workerId: Number(workerId),
-          taskType: 'Quantity',
+          taskType: taskType || primaryTaskType || 'Quantity',
           ratePerPiece: num,
         });
+        if (onWorkerRateChange) onWorkerRateChange(num);
+        const fresh = await getWageRates(workerId);
+        if (Array.isArray(fresh)) setInternalWageRates(fresh);
       } catch {}
     }
-    setEditingRateRowId(null);
   };
 
   const handleUpdateWorkerRate = async (val) => {
-    const num = Math.max(0, Number(val) || 0);
-    updateWorkerRate(num);
-    localStorage.setItem(`cm_worker_rate_${workerId}`, String(num));
-    if (workerId && num > 0) {
-      try {
-        await upsertWageRate({
-          workerId: Number(workerId),
-          taskType: 'Quantity',
-          ratePerPiece: num,
-        });
-      } catch {}
-    }
+    await handleUpdateTaskWageRate(primaryTaskType || 'Quantity', val);
   };
 
   const getLotLatestDate = (rows) => {
@@ -227,7 +273,12 @@ export default function WorkerTable({
   const lotSummary = (rows) => {
     const numCols = effectiveColumns.filter(c => !['completed','dateCompleted','lotNumber','size','color','machine','rate','totalPrice'].includes(c.key));
     const stats = numCols.map(c => {
-      const total = rows.reduce((s, r) => s + (Number(r[c.key]) || 0), 0);
+      const total = rows.reduce((s, r) => {
+        const val = c.isCustomTask
+          ? (customTasksByEntry[r.id]?.[c.rawTaskType] || 0)
+          : (r[c.key] || 0);
+        return s + (Number(val) || 0);
+      }, 0);
       return { key: c.key, label: c.label, total };
     }).filter(x => x.total > 0);
 
@@ -254,41 +305,6 @@ export default function WorkerTable({
           </span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {/* Rate Setter */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            background: isDark ? '#1e293b' : '#f1f5f9',
-            padding: '5px 11px',
-            borderRadius: 8,
-            border: `1px solid ${isDark ? '#334155' : '#cbd5e1'}`,
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: isDark ? '#cbd5e1' : '#475569' }}>🏷️ Rate:</span>
-            <input
-              type="number"
-              min="0"
-              step="0.5"
-              value={workerRate || ''}
-              placeholder="0"
-              onChange={e => handleUpdateWorkerRate(e.target.value)}
-              style={{
-                width: 60,
-                padding: '3px 6px',
-                fontSize: 12,
-                fontWeight: 700,
-                borderRadius: 6,
-                border: `1px solid ${isDark ? '#475569' : '#cbd5e1'}`,
-                background: isDark ? '#0f172a' : '#fff',
-                color: isDark ? '#f8fafc' : '#0f172a',
-                outline: 'none',
-                textAlign: 'center',
-              }}
-              title="Worker rate per piece (multiplies quantity for Total Price)"
-            />
-            <span style={{ fontSize: 11, color: isDark ? '#94a3b8' : '#64748b' }}>/pc</span>
-          </div>
-
           <button
             type="button"
             onClick={() => setShowScanModal(true)}
@@ -337,6 +353,9 @@ export default function WorkerTable({
           columns={effectiveColumns}
           entry={editing}
           dropdowns={dropdowns}
+          wageRates={effectiveWageRates}
+          taskRatesMap={effectiveTaskRatesMap}
+          workerRate={workerRate}
           onSaved={handleSaved}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
@@ -545,30 +564,90 @@ export default function WorkerTable({
                                 </button>
                               </div>
                             ) : (
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ fontWeight: 600, color: '#1d4ed8' }}>
-                                  {getRowRate(row) > 0 ? `₨ ${getRowRate(row)}` : '—'}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setEditingRateRowId(row.id);
-                                    setRateInputVal(String(getRowRate(row) || ''));
-                                  }}
-                                  title="Edit rate"
-                                  style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontSize: 11,
-                                    opacity: 0.5,
-                                    padding: '0 2px',
-                                  }}
-                                >
-                                  ✏️
-                                </button>
-                              </div>
+                              (() => {
+                                const manual = getRowManualRate(row);
+                                const breakdown = !manual ? getRowRateBreakdown(row) : [];
+                                const dispRate = getRowRate(row);
+                                return (
+                                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                                    {breakdown.length > 1 ? (
+                                      breakdown.map(b => (
+                                        <span
+                                          key={b.key}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 3,
+                                            padding: '1px 6px',
+                                            borderRadius: 6,
+                                            background: '#eff6ff',
+                                            border: '1px solid #bfdbfe',
+                                            fontSize: 11.5,
+                                            fontWeight: 700,
+                                            color: '#1d4ed8',
+                                          }}
+                                        >
+                                          <span>{b.label}:</span>
+                                          <span>₨ {b.rate}</span>
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <>
+                                        <span style={{ fontWeight: 700, color: '#1d4ed8' }}>
+                                          {dispRate > 0 ? `₨ ${dispRate}` : '—'}
+                                        </span>
+                                        {breakdown.length === 1 && (
+                                          <span style={{
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            padding: '1px 5px',
+                                            borderRadius: 4,
+                                            background: '#eff6ff',
+                                            color: '#1d4ed8',
+                                            border: '1px solid #bfdbfe',
+                                          }}>
+                                            {breakdown[0].label}
+                                          </span>
+                                        )}
+                                        {manual != null && (
+                                          <span
+                                            style={{
+                                              fontSize: 10,
+                                              fontWeight: 700,
+                                              padding: '1px 5px',
+                                              borderRadius: 4,
+                                              background: '#fef3c7',
+                                              color: '#b45309',
+                                            }}
+                                            title="Custom row override (edit and clear to 0 to revert to task rate)"
+                                          >
+                                            Custom
+                                          </span>
+                                        )}
+                                      </>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingRateRowId(row.id);
+                                        setRateInputVal(String(dispRate || ''));
+                                      }}
+                                      title="Edit rate for this row (clear to 0 to revert to assigned task rate)"
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        fontSize: 11,
+                                        opacity: 0.5,
+                                        padding: '0 2px',
+                                      }}
+                                    >
+                                      ✏️
+                                    </button>
+                                  </div>
+                                );
+                              })()
                             )
                           ) : c.key === 'totalPrice' ? (
                             <span style={{ fontWeight: 700, color: '#15803d' }}>
@@ -576,6 +655,8 @@ export default function WorkerTable({
                                 ? `₨ ${getRowTotalPrice(row).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
                                 : '—'}
                             </span>
+                          ) : c.isCustomTask ? (
+                            customTasksByEntry[row.id]?.[c.rawTaskType] ?? '—'
                           ) : (
                             row[c.key] ?? '—'
                           )}

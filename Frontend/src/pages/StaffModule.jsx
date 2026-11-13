@@ -4,6 +4,7 @@ import { useWorkerEntries, useDropdowns } from '../hooks/useHooks';
 import WorkerTable from '../components/WorkerTable';
 import { getAllWorkers, getWageRates } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import { calculateEntryTotalPrice } from '../utils/wageUtils';
 
 // ── Column presets based on worker process / role ──
 // Note: Size and Color are bound exclusively to Machine Operator (FAIZAN_COLS)
@@ -361,48 +362,102 @@ export default function StaffModule() {
 
   const [workerRate, setWorkerRate] = useState(0);
   const [entryRates, setEntryRates] = useState({});
+  const [allWageRates, setAllWageRates] = useState([]);
+
+  // Fetch all wage rates from Payroll & Wage Accounting
+  useEffect(() => {
+    getWageRates()
+      .then(rates => {
+        if (Array.isArray(rates)) setAllWageRates(rates);
+      })
+      .catch(() => {});
+  }, [activeWorkerId]);
+
+  // Wage rates configured for the active worker in Payroll
+  const activeWorkerWageRates = useMemo(() => {
+    if (!allWageRates || allWageRates.length === 0 || !activeWorkerId) return [];
+    return allWageRates.filter(r =>
+      r.workerId === Number(activeWorkerId) ||
+      (activeWorker?.name && r.workerName && r.workerName.trim().toLowerCase() === activeWorker.name.trim().toLowerCase())
+    );
+  }, [allWageRates, activeWorkerId, activeWorker]);
+
+  // Map of { taskType: ratePerPiece }
+  const workerTaskRatesMap = useMemo(() => {
+    const map = {};
+    activeWorkerWageRates.forEach(r => {
+      if (r.taskType && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
+        map[r.taskType.trim().toLowerCase()] = Number(r.ratePerPiece);
+      }
+    });
+    return map;
+  }, [activeWorkerWageRates]);
+
+  const primaryTaskType = useMemo(() => {
+    if (activeWorkerWageRates.length === 0) return '';
+    const q = activeWorkerWageRates.find(r => r.taskType?.toLowerCase() === 'quantity');
+    return q?.taskType || activeWorkerWageRates[0]?.taskType || '';
+  }, [activeWorkerWageRates]);
+
+  const primaryWorkerRate = useMemo(() => {
+    if (workerTaskRatesMap['quantity']) return workerTaskRatesMap['quantity'];
+    if (activeWorkerWageRates.length > 0 && activeWorkerWageRates[0]?.ratePerPiece != null) {
+      return Number(activeWorkerWageRates[0].ratePerPiece);
+    }
+    const savedRate = localStorage.getItem(`cm_worker_rate_${activeWorkerId}`);
+    return savedRate ? Number(savedRate) : 0;
+  }, [workerTaskRatesMap, activeWorkerWageRates, activeWorkerId]);
 
   useEffect(() => {
     if (!activeWorkerId) return;
-    const savedRate = localStorage.getItem(`cm_worker_rate_${activeWorkerId}`);
-    if (savedRate) setWorkerRate(Number(savedRate));
     try {
-      setEntryRates(JSON.parse(localStorage.getItem(`cm_entry_rates_${activeWorkerId}`) || '{}'));
+      setEntryRates(JSON.parse(localStorage.getItem(`cm_entry_manual_rates_${activeWorkerId}`) || '{}'));
     } catch {
       setEntryRates({});
     }
 
-    getWageRates(activeWorkerId).then(rates => {
-      if (Array.isArray(rates) && rates.length > 0) {
-        const r = rates.find(x => x.taskType?.toLowerCase() === 'quantity' || x.taskType?.toLowerCase() === 'cutting') || rates[0];
-        if (r && r.ratePerPiece != null && Number(r.ratePerPiece) > 0) {
-          setWorkerRate(Number(r.ratePerPiece));
-          localStorage.setItem(`cm_worker_rate_${activeWorkerId}`, String(r.ratePerPiece));
-        }
-      }
-    }).catch(() => {});
-  }, [activeWorkerId]);
+    if (primaryWorkerRate > 0) {
+      setWorkerRate(primaryWorkerRate);
+      localStorage.setItem(`cm_worker_rate_${activeWorkerId}`, String(primaryWorkerRate));
+    } else {
+      const savedRate = localStorage.getItem(`cm_worker_rate_${activeWorkerId}`);
+      if (savedRate) setWorkerRate(Number(savedRate));
+    }
+  }, [activeWorkerId, primaryWorkerRate]);
 
-  // Quick stats for active worker (including sum of all payments / total amount)
+  // Quick stats for active worker (using assigned wages from Payroll)
   const stats = useMemo(() => {
     if (!entries || entries.length === 0) {
       return { totalEntries: 0, uniqueLots: 0, totalPieces: 0, completedPieces: 0, totalAmount: 0 };
     }
     const totalEntries = entries.length;
     const uniqueLots = new Set(entries.map(e => e.lotNumber).filter(Boolean)).size;
-    const totalPieces = entries.reduce((s, e) => s + (Number(e.totalPiece || e.quantity || 0) || 0), 0);
+
+    let customTasksByEntry = {};
+    try {
+      customTasksByEntry = JSON.parse(localStorage.getItem(`cm_entry_custom_tasks_${activeWorkerId}`) || '{}');
+    } catch {}
+
+    const totalPieces = entries.reduce((s, e) => {
+      const explicitTotal = Number(e.totalPiece || e.quantity || 0) || 0;
+      if (explicitTotal > 0) return s + explicitTotal;
+      const customSum = customTasksByEntry[e.id]
+        ? Object.values(customTasksByEntry[e.id]).reduce((a, b) => a + (Number(b) || 0), 0)
+        : 0;
+      if (customSum > 0) return s + customSum;
+      const stdSum = ['front', 'bazo', 'tape', 'pocket', 'gala', 'lable', 'moda']
+        .reduce((a, k) => a + (Number(e[k]) || 0), 0);
+      return s + stdSum;
+    }, 0);
     const completedPieces = entries.reduce((s, e) => s + (Number(e.completed || 0) || 0), 0);
 
     const totalAmount = entries.reduce((sum, e) => {
-      const rowRate = e.rate != null && e.rate !== '' 
-        ? Number(e.rate) 
-        : (entryRates[e.id] != null ? Number(entryRates[e.id]) : Number(workerRate || 0));
-      const qty = Number(e.quantity != null && e.quantity !== '' ? e.quantity : (e.totalPiece || 0)) || 0;
-      return sum + (rowRate * qty);
+      const manualRate = entryRates?.[e.id] != null && Number(entryRates[e.id]) > 0 ? Number(entryRates[e.id]) : null;
+      return sum + calculateEntryTotalPrice(e, workerTaskRatesMap, workerRate || primaryWorkerRate, customTasksByEntry[e.id], manualRate);
     }, 0);
 
     return { totalEntries, uniqueLots, totalPieces, completedPieces, totalAmount };
-  }, [entries, workerRate, entryRates]);
+  }, [entries, activeWorkerId, workerRate, primaryWorkerRate, workerTaskRatesMap, entryRates]);
 
   // ─────────────────────────────────────────────────────────────
   // VIEW 1: WHOLE SCREEN STAFF TABS DIRECTORY (when !id)
@@ -664,6 +719,46 @@ export default function StaffModule() {
             </div>
             <div style={styles.bannerMeta}>
               Worker ID #{activeWorker?.id} · {activeConfig.dept} Department
+              {activeWorkerWageRates.length > 0 ? (
+                activeWorkerWageRates.map(r => (
+                  <span
+                    key={r.taskType}
+                    style={{
+                      marginLeft: 8,
+                      background: 'rgba(255, 255, 255, 0.22)',
+                      padding: '2px 9px',
+                      borderRadius: 12,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: '#ffffff',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                    title="Wage rate assigned in Production Staff"
+                  >
+                    🏷️ {r.taskType}: PKR {Number(r.ratePerPiece || 0).toLocaleString()}/pc
+                  </span>
+                ))
+              ) : primaryWorkerRate > 0 && (
+                <span
+                  style={{
+                    marginLeft: 10,
+                    background: 'rgba(255, 255, 255, 0.22)',
+                    padding: '2px 9px',
+                    borderRadius: 12,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: '#ffffff',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                  title="Wage rate assigned in Production Staff"
+                >
+                  🏷️ Assigned Wage: PKR {primaryWorkerRate.toLocaleString()}/pc {primaryTaskType ? `(${primaryTaskType})` : ''}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -710,8 +805,14 @@ export default function StaffModule() {
             entries={entries}
             reload={reloadEntries}
             dropdowns={dropdowns}
-            workerRate={workerRate}
-            onWorkerRateChange={setWorkerRate}
+            wageRates={activeWorkerWageRates}
+            taskRatesMap={workerTaskRatesMap}
+            primaryTaskType={primaryTaskType}
+            workerRate={workerRate || primaryWorkerRate}
+            onWorkerRateChange={(newRate) => {
+              setWorkerRate(newRate);
+              getWageRates().then(rates => { if (Array.isArray(rates)) setAllWageRates(rates); }).catch(() => {});
+            }}
             entryRates={entryRates}
             onEntryRatesChange={setEntryRates}
           />
@@ -854,7 +955,7 @@ const styles = {
   // ── WHOLE SCREEN STAFF TABS GRID (Beautiful POS style) ──
   staffGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(215px, 1fr))',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
     gap: '0.85rem',
   },
   staffCard: (gradient, glow, isStaffActive = true) => ({

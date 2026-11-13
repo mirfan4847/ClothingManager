@@ -2,7 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import api from '../services/api';
+import api, { getWageRates, upsertWageRate, deleteWageRate } from '../services/api';
+
+const fmtRate = (n) => 'PKR ' + Number(n || 0).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-PK') : '—';
 
 const initForm = { name: '', role: '', phone: '', status: 'Active', joinDate: '', personType: 'Worker' };
 
@@ -65,14 +68,46 @@ export default function LabourModule() {
   const [page,     setPage]       = useState(1);
   const [pageSize, setPageSize]   = useState(10);
 
-  // Load workers and configured roles from real API
+  // Tabs & Wage Rates management
+  const [activeTab, setActiveTab]               = useState('roster'); // 'roster' | 'wages'
+  const [wageRates, setWageRates]               = useState([]);
+  const [taskTypes, setTaskTypes]               = useState(['Front', 'Bazo', 'Tape', 'Pocket', 'Gala', 'Lable', 'Moda', 'Quantity', 'TotalPiece']);
+  const [rateForm, setRateForm]                 = useState({ workerId: '', taskType: '', ratePerPiece: '' });
+  const [rateWorkerFilter, setRateWorkerFilter]   = useState('');
+  const [rateSaving, setRateSaving]             = useState(false);
+  const [rateDeleteConfirm, setRateDeleteConfirm] = useState(null);
+  const [editingRate, setEditingRate]           = useState(null); // { id, workerId, taskType, ratePerPiece, origWorkerId, origTaskType }
+
+  const allTaskTypes = useMemo(() => Array.from(new Set([
+    ...taskTypes,
+    ...wageRates.map(r => r.taskType).filter(Boolean),
+  ])), [taskTypes, wageRates]);
+
+  const filteredRates = useMemo(() => {
+    return rateWorkerFilter
+      ? wageRates.filter(r => r.workerId === Number(rateWorkerFilter))
+      : wageRates;
+  }, [wageRates, rateWorkerFilter]);
+
+  const ratesByWorker = useMemo(() => {
+    const map = {};
+    wageRates.forEach(r => {
+      if (!map[r.workerId]) map[r.workerId] = [];
+      map[r.workerId].push(r);
+    });
+    return map;
+  }, [wageRates]);
+
+  // Load workers, roles, wage rates, and task types from real API
   const loadWorkers = async () => {
     setLoading(true);
     setApiError('');
     try {
-      const [res, rolesRes] = await Promise.all([
+      const [res, rolesRes, ratesRes, ttRes] = await Promise.all([
         api.get('/workers'),
         api.get('/dropdowns/worker-roles').then(r => r.data).catch(() => []),
+        getWageRates().catch(() => []),
+        api.get('/dropdowns/task-types').then(r => r.data).catch(() => []),
       ]);
       const mapped = res.data.map(w => ({
         id:         w.id,
@@ -87,6 +122,12 @@ export default function LabourModule() {
       if (Array.isArray(rolesRes) && rolesRes.length > 0) {
         setRoles(rolesRes.map(r => r.name).filter(Boolean));
       }
+      if (Array.isArray(ratesRes)) {
+        setWageRates(ratesRes);
+      }
+      if (Array.isArray(ttRes) && ttRes.length > 0) {
+        setTaskTypes(ttRes.map(t => t.name).filter(Boolean));
+      }
     } catch {
       setApiError('Could not load workers from server.');
     }
@@ -94,6 +135,75 @@ export default function LabourModule() {
   };
 
   useEffect(() => { loadWorkers(); }, []);
+
+  // Wage Rate Handlers
+  const handleRateSubmit = async () => {
+    if (!rateForm.workerId || !rateForm.taskType || !rateForm.ratePerPiece) return;
+    setRateSaving(true);
+    setApiError('');
+    try {
+      await upsertWageRate({
+        workerId: Number(rateForm.workerId),
+        taskType: rateForm.taskType,
+        ratePerPiece: Number(rateForm.ratePerPiece),
+      });
+      setRateForm({ workerId: rateWorkerFilter || '', taskType: '', ratePerPiece: '' });
+      setWageRates(await getWageRates());
+    } catch {
+      setApiError('Failed to save wage rate.');
+    }
+    setRateSaving(false);
+  };
+
+  const handleStartEditRate = (r) => {
+    setRateDeleteConfirm(null);
+    setEditingRate({
+      id: r.id,
+      workerId: String(r.workerId),
+      taskType: r.taskType,
+      ratePerPiece: String(r.ratePerPiece),
+      origWorkerId: String(r.workerId),
+      origTaskType: r.taskType,
+    });
+  };
+
+  const handleSaveEditRate = async () => {
+    if (!editingRate || !editingRate.workerId || !editingRate.taskType || editingRate.ratePerPiece === '') return;
+    setRateSaving(true);
+    setApiError('');
+    try {
+      const targetChanged =
+        String(editingRate.workerId) !== String(editingRate.origWorkerId) ||
+        editingRate.taskType !== editingRate.origTaskType;
+
+      await upsertWageRate({
+        workerId: Number(editingRate.workerId),
+        taskType: editingRate.taskType,
+        ratePerPiece: Number(editingRate.ratePerPiece),
+      });
+
+      if (targetChanged && editingRate.id) {
+        await deleteWageRate(editingRate.id).catch(() => {});
+      }
+
+      setEditingRate(null);
+      setWageRates(await getWageRates());
+    } catch {
+      setApiError('Failed to update wage rate.');
+    }
+    setRateSaving(false);
+  };
+
+  const handleDeleteRate = async (id) => {
+    setApiError('');
+    try {
+      await deleteWageRate(id);
+      setWageRates(prev => prev.filter(x => x.id !== id));
+    } catch {
+      setApiError('Failed to delete wage rate.');
+    }
+    setRateDeleteConfirm(null);
+  };
 
   const filtered = useMemo(() => {
     return labours.filter(l => {
@@ -229,11 +339,60 @@ export default function LabourModule() {
           </div>
         </div>
 
-        {can('canAddLabour') && (
+        {activeTab === 'roster' && can('canAddLabour') && (
           <button style={styles.addBtn(currentColor.primary)} onClick={openAdd}>
             <span style={{ fontSize: 18, lineHeight: 1 }}>+</span> Add New Worker
           </button>
         )}
+      </div>
+
+      {/* ── Section Tabs ── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+        {[
+          { key: 'roster', label: 'Staff Roster', icon: '👥', count: labours.length },
+          { key: 'wages',  label: 'Wage Rates',   icon: '🏷️', count: wageRates.length },
+        ].map(t => {
+          const active = activeTab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => { setActiveTab(t.key); setApiError(''); }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '9px 18px',
+                borderRadius: 999,
+                border: active
+                  ? `1.5px solid ${currentColor.primary}`
+                  : isDark ? '1px solid #334155' : '1px solid #e2e8f0',
+                background: active
+                  ? currentColor.primary
+                  : isDark ? '#1e293b' : '#ffffff',
+                color: active ? '#ffffff' : isDark ? '#cbd5e1' : '#334155',
+                fontSize: 13.5,
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: active ? `0 4px 12px ${currentColor.primary}40` : '0 1px 3px rgba(0,0,0,0.04)',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span>{t.icon}</span>
+              <span>{t.label}</span>
+              <span style={{
+                padding: '2px 8px',
+                borderRadius: 999,
+                fontSize: 11,
+                fontWeight: 800,
+                background: active ? 'rgba(255,255,255,0.22)' : isDark ? '#334155' : '#f1f5f9',
+                color: active ? '#ffffff' : isDark ? '#cbd5e1' : '#475569',
+              }}>
+                {t.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {apiError && (
@@ -242,7 +401,9 @@ export default function LabourModule() {
         </div>
       )}
 
-      {/* ── Executive KPI Cards / Interactive Tabs ── */}
+      {activeTab === 'roster' && (
+        <>
+          {/* ── Executive KPI Cards / Interactive Tabs ── */}
       <div style={styles.statsRow}>
         {/* Total Staff */}
         <div
@@ -359,18 +520,19 @@ export default function LabourModule() {
               <thead>
                 <tr>
                   <th style={styles.th(isDark, 50)}>#</th>
-                  <th style={styles.th(isDark, 240)}>Worker Name</th>
-                  <th style={styles.th(isDark, 180)}>Role / Process</th>
-                  <th style={styles.th(isDark, 140)}>Phone</th>
-                  <th style={styles.th(isDark, 130)}>Join Date</th>
-                  <th style={styles.th(isDark, 120)}>Status</th>
+                  <th style={styles.th(isDark, 230)}>Worker Name</th>
+                  <th style={styles.th(isDark, 150)}>Role / Process</th>
+                  <th style={styles.th(isDark, 210)}>Wage Rates</th>
+                  <th style={styles.th(isDark, 130)}>Phone</th>
+                  <th style={styles.th(isDark, 120)}>Join Date</th>
+                  <th style={styles.th(isDark, 110)}>Status</th>
                   <th style={{ ...styles.th(isDark, 170), textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {paginated.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={styles.empty(isDark)}>
+                    <td colSpan={8} style={styles.empty(isDark)}>
                       <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔍</div>
                       <div>No matching workforce records found</div>
                       <div style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#94a3b8', marginTop: 4 }}>
@@ -416,6 +578,66 @@ export default function LabourModule() {
                               {l.role || 'Worker'}
                             </span>
                           )}
+                        </td>
+
+                        {/* Wage Rates */}
+                        <td style={styles.td}>
+                          {(() => {
+                            const wRates = ratesByWorker[l.id] || [];
+                            const openWorkerWages = () => {
+                              setRateWorkerFilter(String(l.id));
+                              setRateForm(prev => ({ ...prev, workerId: String(l.id) }));
+                              setActiveTab('wages');
+                            };
+                            if (wRates.length === 0) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={openWorkerWages}
+                                  style={{
+                                    padding: '3px 9px',
+                                    borderRadius: 999,
+                                    border: isDark ? '1px dashed #475569' : '1px dashed #cbd5e1',
+                                    background: 'transparent',
+                                    color: isDark ? '#94a3b8' : '#64748b',
+                                    fontSize: 11.5,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  + Assign Wage
+                                </button>
+                              );
+                            }
+                            return (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                {wRates.map(r => (
+                                  <button
+                                    key={r.id}
+                                    type="button"
+                                    onClick={openWorkerWages}
+                                    title="Click to manage or edit wage rates"
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 5,
+                                      padding: '3px 9px',
+                                      borderRadius: 999,
+                                      border: isDark ? '1px solid #1e40af' : '1px solid #bfdbfe',
+                                      background: isDark ? 'rgba(37, 99, 235, 0.16)' : '#eff6ff',
+                                      color: isDark ? '#93c5fd' : '#1d4ed8',
+                                      fontSize: 11.5,
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <span>{r.taskType}:</span>
+                                    <span>Rs {Number(r.ratePerPiece || 0).toLocaleString('en-PK')}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Phone */}
@@ -490,6 +712,498 @@ export default function LabourModule() {
           isDark={isDark}
         />
       </div>
+        </>
+      )}
+
+      {activeTab === 'wages' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* ── Set Worker Piece Rate Form Card ── */}
+          <div style={{
+            background: isDark ? '#1e293b' : '#ffffff',
+            border: isDark ? '1px solid #334155' : '1px solid #e2e8f0',
+            borderRadius: 16,
+            padding: '18px 20px',
+            boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.22)' : '0 4px 16px rgba(15,23,42,0.05)',
+          }}>
+            <div style={{
+              fontSize: 12,
+              fontWeight: 800,
+              letterSpacing: '0.07em',
+              color: isDark ? '#fbbf24' : '#b45309',
+              marginBottom: 14,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}>
+              <span>🏷️</span> SET WORKER PIECE RATE
+            </div>
+
+            <form
+              onSubmit={handleRateSubmit}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                gap: 12,
+                alignItems: 'end',
+              }}
+            >
+              <div>
+                <label style={{
+                  display: 'block',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.05em',
+                  color: isDark ? '#94a3b8' : '#64748b',
+                  marginBottom: 6,
+                }}>
+                  WORKER
+                </label>
+                <select
+                  value={rateForm.workerId}
+                  onChange={e => setRateForm(f => ({ ...f, workerId: e.target.value }))}
+                  required
+                  style={{
+                    width: '100%',
+                    height: 40,
+                    padding: '0 12px',
+                    borderRadius: 10,
+                    border: isDark ? '1px solid #334155' : '1px solid #cbd5e1',
+                    background: isDark ? '#0f172a' : '#f8fafc',
+                    color: isDark ? '#f1f5f9' : '#0f172a',
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">— Select Worker —</option>
+                  {labours.map(w => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}{w.role ? ` (${w.role})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.05em',
+                  color: isDark ? '#94a3b8' : '#64748b',
+                  marginBottom: 6,
+                }}>
+                  TASK TYPE
+                </label>
+                <select
+                  value={rateForm.taskType}
+                  onChange={e => setRateForm(f => ({ ...f, taskType: e.target.value }))}
+                  required
+                  style={{
+                    width: '100%',
+                    height: 40,
+                    padding: '0 12px',
+                    borderRadius: 10,
+                    border: isDark ? '1px solid #334155' : '1px solid #cbd5e1',
+                    background: isDark ? '#0f172a' : '#f8fafc',
+                    color: isDark ? '#f1f5f9' : '#0f172a',
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">— Select Task —</option>
+                  {allTaskTypes.map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: '0.05em',
+                  color: isDark ? '#94a3b8' : '#64748b',
+                  marginBottom: 6,
+                }}>
+                  RATE PER PIECE (PKR)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="e.g. 5.50"
+                  value={rateForm.ratePerPiece}
+                  onChange={e => setRateForm(f => ({ ...f, ratePerPiece: e.target.value }))}
+                  required
+                  style={{
+                    width: '100%',
+                    height: 40,
+                    padding: '0 12px',
+                    borderRadius: 10,
+                    border: isDark ? '1px solid #334155' : '1px solid #cbd5e1',
+                    background: isDark ? '#0f172a' : '#f8fafc',
+                    color: isDark ? '#f1f5f9' : '#0f172a',
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div>
+                <button
+                  type="submit"
+                  disabled={rateSaving}
+                  style={{
+                    width: '100%',
+                    height: 40,
+                    borderRadius: 10,
+                    border: 'none',
+                    background: currentColor.primary,
+                    color: '#ffffff',
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    cursor: rateSaving ? 'not-allowed' : 'pointer',
+                    opacity: rateSaving ? 0.7 : 1,
+                    boxShadow: `0 4px 12px ${currentColor.primary}40`,
+                  }}
+                >
+                  {rateSaving ? 'Saving...' : '+ Save Rate'}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* ── Filter Bar ── */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 12,
+            background: isDark ? '#1e293b' : '#ffffff',
+            border: isDark ? '1px solid #334155' : '1px solid #e2e8f0',
+            borderRadius: 14,
+            padding: '12px 18px',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: isDark ? '#cbd5e1' : '#334155' }}>
+                Filter by worker:
+              </span>
+              <select
+                value={rateWorkerFilter}
+                onChange={e => setRateWorkerFilter(e.target.value)}
+                style={{
+                  height: 36,
+                  padding: '0 12px',
+                  borderRadius: 9,
+                  border: isDark ? '1px solid #334155' : '1px solid #cbd5e1',
+                  background: isDark ? '#0f172a' : '#f8fafc',
+                  color: isDark ? '#f1f5f9' : '#0f172a',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  outline: 'none',
+                }}
+              >
+                <option value="">All Workers</option>
+                {labours.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              {rateWorkerFilter && (
+                <button
+                  type="button"
+                  onClick={() => setRateWorkerFilter('')}
+                  style={{
+                    padding: '5px 10px',
+                    borderRadius: 8,
+                    border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                    background: 'transparent',
+                    color: isDark ? '#cbd5e1' : '#475569',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Clear Filter
+                </button>
+              )}
+            </div>
+
+            <span style={{
+              padding: '5px 12px',
+              borderRadius: 999,
+              background: isDark ? 'rgba(37, 99, 235, 0.18)' : '#eff6ff',
+              color: isDark ? '#93c5fd' : '#1d4ed8',
+              fontSize: 12,
+              fontWeight: 700,
+            }}>
+              {filteredRates.length} configured {filteredRates.length === 1 ? 'rate' : 'rates'}
+            </span>
+          </div>
+
+          {/* ── Configured Wage Rates Table ── */}
+          <div style={styles.tableCard(isDark)}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th(isDark, 230)}>Worker</th>
+                    <th style={styles.th(isDark, 180)}>Task Type</th>
+                    <th style={styles.th(isDark, 160)}>Rate / Piece</th>
+                    <th style={styles.th(isDark, 140)}>Last Updated</th>
+                    <th style={{ ...styles.th(isDark, 220), textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRates.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} style={styles.empty(isDark)}>
+                        <div style={{ fontSize: '2rem', marginBottom: 8 }}>🏷️</div>
+                        <div>No wage rates configured{rateWorkerFilter ? ' for this worker' : ''} yet</div>
+                        <div style={{ fontSize: 13, color: isDark ? 'var(--text-muted)' : '#94a3b8', marginTop: 4 }}>
+                          Use the form above to assign a worker piece rate
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRates.map((r, idx) => {
+                      const isEditing = editingRate?.id === r.id;
+                      return (
+                        <tr key={r.id} style={styles.tr(isDark, idx % 2 === 0)}>
+                          <td style={styles.td}>
+                            {isEditing ? (
+                              <select
+                                value={editingRate.workerId}
+                                onChange={e => setEditingRate(ed => ({ ...ed, workerId: e.target.value }))}
+                                style={{
+                                  width: '100%',
+                                  height: 34,
+                                  padding: '0 8px',
+                                  borderRadius: 8,
+                                  border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                                  background: isDark ? '#0f172a' : '#ffffff',
+                                  color: isDark ? '#f1f5f9' : '#0f172a',
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {labours.map(w => (
+                                  <option key={w.id} value={w.id}>{w.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span style={{ fontWeight: 700, color: isDark ? '#f1f5f9' : '#0f172a' }}>
+                                {r.workerName}
+                              </span>
+                            )}
+                          </td>
+
+                          <td style={styles.td}>
+                            {isEditing ? (
+                              <select
+                                value={editingRate.taskType}
+                                onChange={e => setEditingRate(ed => ({ ...ed, taskType: e.target.value }))}
+                                style={{
+                                  width: '100%',
+                                  height: 34,
+                                  padding: '0 8px',
+                                  borderRadius: 8,
+                                  border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                                  background: isDark ? '#0f172a' : '#ffffff',
+                                  color: isDark ? '#f1f5f9' : '#0f172a',
+                                  fontSize: 13,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {allTaskTypes.map(t => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span style={{
+                                display: 'inline-block',
+                                padding: '4px 10px',
+                                borderRadius: 999,
+                                background: isDark ? 'rgba(37, 99, 235, 0.18)' : '#eff6ff',
+                                color: isDark ? '#93c5fd' : '#1d4ed8',
+                                fontSize: 12,
+                                fontWeight: 700,
+                              }}>
+                                {r.taskType}
+                              </span>
+                            )}
+                          </td>
+
+                          <td style={styles.td}>
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={editingRate.ratePerPiece}
+                                onChange={e => setEditingRate(ed => ({ ...ed, ratePerPiece: e.target.value }))}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') { e.preventDefault(); handleSaveEditRate(); }
+                                  if (e.key === 'Escape') { e.preventDefault(); setEditingRate(null); }
+                                }}
+                                autoFocus
+                                style={{
+                                  width: 120,
+                                  height: 34,
+                                  padding: '0 10px',
+                                  borderRadius: 8,
+                                  border: `1.5px solid ${currentColor.primary}`,
+                                  background: isDark ? '#0f172a' : '#ffffff',
+                                  color: isDark ? '#f1f5f9' : '#0f172a',
+                                  fontSize: 13,
+                                  fontWeight: 700,
+                                  outline: 'none',
+                                }}
+                              />
+                            ) : (
+                              <span style={{
+                                fontWeight: 800,
+                                color: isDark ? '#60a5fa' : '#2563eb',
+                                fontSize: 13.5,
+                              }}>
+                                {fmtRate(r.ratePerPiece)}
+                              </span>
+                            )}
+                          </td>
+
+                          <td style={styles.td}>
+                            <span style={{ color: isDark ? '#94a3b8' : '#64748b', fontSize: 13 }}>
+                              {fmtDate(r.updatedAt)}
+                            </span>
+                          </td>
+
+                          <td style={{ ...styles.td, textAlign: 'right' }}>
+                            {isEditing ? (
+                              <div style={{ display: 'inline-flex', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  disabled={rateSaving}
+                                  onClick={handleSaveEditRate}
+                                  style={{
+                                    padding: '6px 12px',
+                                    borderRadius: 8,
+                                    border: 'none',
+                                    background: '#16a34a',
+                                    color: '#ffffff',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    cursor: rateSaving ? 'not-allowed' : 'pointer',
+                                  }}
+                                >
+                                  ✓ Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingRate(null)}
+                                  style={{
+                                    padding: '6px 12px',
+                                    borderRadius: 8,
+                                    border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                                    background: isDark ? '#0f172a' : '#ffffff',
+                                    color: isDark ? '#cbd5e1' : '#475569',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ✕ Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditRate(r)}
+                                  style={{
+                                    padding: '5px 11px',
+                                    borderRadius: 8,
+                                    border: isDark ? '1px solid #1d4ed8' : '1px solid #bfdbfe',
+                                    background: isDark ? 'rgba(37, 99, 235, 0.15)' : '#eff6ff',
+                                    color: isDark ? '#93c5fd' : '#1d4ed8',
+                                    fontSize: 12.5,
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ✏️ Edit
+                                </button>
+                                {rateDeleteConfirm === r.id ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteRate(r.id)}
+                                      style={{
+                                        padding: '5px 10px',
+                                        borderRadius: 8,
+                                        border: 'none',
+                                        background: '#dc2626',
+                                        color: '#ffffff',
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setRateDeleteConfirm(null)}
+                                      style={{
+                                        padding: '5px 10px',
+                                        borderRadius: 8,
+                                        border: isDark ? '1px solid #475569' : '1px solid #cbd5e1',
+                                        background: 'transparent',
+                                        color: isDark ? '#cbd5e1' : '#475569',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRateDeleteConfirm(r.id)}
+                                    title="Delete rate"
+                                    style={{
+                                      padding: '5px 9px',
+                                      borderRadius: 8,
+                                      border: isDark ? '1px solid rgba(239,68,68,0.35)' : '1px solid #fecaca',
+                                      background: isDark ? 'rgba(239,68,68,0.12)' : '#fef2f2',
+                                      color: '#ef4444',
+                                      fontSize: 12.5,
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    🗑️
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Add / Edit Modal ── */}
       {showModal && (

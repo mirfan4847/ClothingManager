@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { createEntry, updateEntry } from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import { buildAssignedTaskColumns } from '../utils/wageUtils';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -27,15 +28,18 @@ function formatDisplayDate(ymd) {
   return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved, onCancel }) {
+export default function EntryForm({ workerId, columns, entry, dropdowns, wageRates, taskRatesMap, workerRate, onSaved, onCancel }) {
   const { isDark, currentColor } = useTheme();
-  const { register, handleSubmit, reset, setValue, control, getValues } = useForm();
+  const { register, handleSubmit, reset, setValue, control, getValues, watch } = useForm();
   const [saveError, setSaveError] = useState('');
   const watchedSizeId        = useWatch({ control, name: 'sizeId' });
   const watchedLotId         = useWatch({ control, name: 'lotId' });
   const watchedColorId       = useWatch({ control, name: 'colorId' });
   const watchedDateCompleted = useWatch({ control, name: 'dateCompleted' });
   const watchedCompleted     = useWatch({ control, name: 'completed' });
+  const watchedRate          = useWatch({ control, name: 'rate' });
+  const watchedQuantity      = useWatch({ control, name: 'quantity' });
+  const watchedTotalPiece    = useWatch({ control, name: 'totalPiece' });
   const initialized = useRef(false);
   const inputStyle = getInputStyle(isDark);
 
@@ -64,9 +68,22 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
   useEffect(() => {
     initialized.current = false;
     const cleanDate = entry?.dateCompleted ? String(entry.dateCompleted).split('T')[0] : '';
+
+    let customTaskDefaults = {};
+    if (entry?.id) {
+      try {
+        const savedCustomAll = JSON.parse(localStorage.getItem(`cm_entry_custom_tasks_${workerId}`) || '{}');
+        const entryCustom = savedCustomAll[entry.id] || {};
+        Object.entries(entryCustom).forEach(([taskName, val]) => {
+          customTaskDefaults[`customTask_${taskName}`] = val;
+        });
+      } catch {}
+    }
+
     reset(entry
       ? {
           ...entry,
+          ...customTaskDefaults,
           lotId: entry.lotId,
           sizeId: entry.sizeId,
           colorId: entry.colorId,
@@ -100,6 +117,16 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
   }, []);
+
+  // Show ONLY Lot Number + assigned task types from Payroll + Completed + Date Completed
+  const formColumns = useMemo(() => {
+    return [
+      { key: 'lotNumber', label: 'Lot Number' },
+      ...buildAssignedTaskColumns(wageRates),
+      { key: 'completed', label: 'Completed' },
+      { key: 'dateCompleted', label: 'Date Completed' },
+    ];
+  }, [wageRates]);
 
   const sizeFilteredLots = useMemo(() => {
     const allLots = dropdowns?.lots || [];
@@ -205,6 +232,23 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
       setSaveError('Please select a Lot Number.');
       return;
     }
+
+    // Collect values from any assigned custom Payroll task types (e.g., Jarsy, Sando)
+    const customTaskValues = {};
+    let customTaskSum = 0;
+    let hasCustomTasks = false;
+    formColumns.forEach(col => {
+      if (col.isCustomTask && col.rawTaskType) {
+        hasCustomTasks = true;
+        const rawVal = data[col.key];
+        const num = rawVal != null && rawVal !== '' ? Number(rawVal) : 0;
+        if (num > 0) {
+          customTaskValues[col.rawTaskType] = num;
+          customTaskSum += num;
+        }
+      }
+    });
+
     const payload = {
       workerId: Number(workerId),
       lotId: Number(data.lotId),
@@ -219,23 +263,25 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
       lable: data.lable ? Number(data.lable) : null,
       moda: data.moda ? Number(data.moda) : null,
       quantity: data.quantity ? Number(data.quantity) : null,
-      totalPiece: data.totalPiece ? Number(data.totalPiece) : null,
+      totalPiece: data.totalPiece
+        ? Number(data.totalPiece)
+        : (hasCustomTasks && customTaskSum > 0 ? customTaskSum : (entry?.totalPiece ?? null)),
       completed: !!data.completed,
       dateCompleted: data.dateCompleted || null,
     };
     try {
       const res = entry ? await updateEntry(entry.id, payload) : await createEntry(payload);
-      if (data.rate != null && data.rate !== '') {
-        const rateVal = Number(data.rate);
-        const savedId = entry?.id || res?.id;
-        if (savedId) {
-          try {
-            const entryRates = JSON.parse(localStorage.getItem(`cm_entry_rates_${workerId}`) || '{}');
-            entryRates[savedId] = rateVal;
-            localStorage.setItem(`cm_entry_rates_${workerId}`, JSON.stringify(entryRates));
-          } catch {}
-        }
-        localStorage.setItem(`cm_worker_rate_${workerId}`, String(rateVal));
+      const savedId = entry?.id || res?.id;
+      if (savedId && hasCustomTasks) {
+        try {
+          const savedCustomAll = JSON.parse(localStorage.getItem(`cm_entry_custom_tasks_${workerId}`) || '{}');
+          if (Object.keys(customTaskValues).length > 0) {
+            savedCustomAll[savedId] = customTaskValues;
+          } else {
+            delete savedCustomAll[savedId];
+          }
+          localStorage.setItem(`cm_entry_custom_tasks_${workerId}`, JSON.stringify(savedCustomAll));
+        } catch {}
       }
       onSaved();
     } catch (err) {
@@ -871,9 +917,9 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
       />
     );
     if (key === 'totalPrice') {
-      const watchedRate = Number(watch('rate')) || Number(localStorage.getItem(`cm_worker_rate_${workerId}`)) || 0;
-      const watchedQty = Number(watch('quantity')) || Number(watch('totalPiece')) || 0;
-      const calcTotal = watchedRate * watchedQty;
+      const currentRate = Number(watchedRate ?? watch('rate')) || Number(localStorage.getItem(`cm_worker_rate_${workerId}`)) || 0;
+      const currentQty = Number(watchedQuantity ?? watch('quantity')) || Number(watchedTotalPiece ?? watch('totalPiece')) || 0;
+      const calcTotal = currentRate * currentQty;
       return (
         <div key={key} style={{ ...inputStyle, background: isDark ? 'var(--bg-subtle)' : '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 12, color: isDark ? 'var(--text-muted)' : '#64748b' }}>Total Price:</span>
@@ -913,24 +959,61 @@ export default function EntryForm({ workerId, columns, entry, dropdowns, onSaved
               </div>
             )}
 
+            {(!wageRates || wageRates.length === 0) && (
+              <div style={{
+                background: isDark ? 'rgba(245, 158, 11, 0.12)' : '#fffbeb',
+                color: isDark ? '#fcd34d' : '#92400e',
+                border: `1px solid ${isDark ? 'rgba(245, 158, 11, 0.3)' : '#fde68a'}`,
+                padding: '8px 12px',
+                borderRadius: 8,
+                marginBottom: 14,
+                fontSize: 12,
+                fontWeight: 600,
+              }}>
+                ℹ️ No task types are assigned to this worker in Payroll yet. Assign tasks in Payroll → Wage Rates to record piece quantities here.
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-              {columns.map(col => (
-                <div
-                  key={col.key}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 5,
-                    gridColumn: col.key === 'lotNumber' && !columns.some(c => c.key === 'size' || c.key === 'machine') ? '1 / -1' : 'auto',
-                  }}
-                >
-                  <label style={getLabelStyle(isDark)}>
-                    {col.label}
-                    {col.key === 'lotNumber' && <span style={{ color: '#ef4444', marginLeft: 3 }}>*</span>}
-                  </label>
-                  {fieldByKey(col.key)}
-                </div>
-              ))}
+              {formColumns.map(col => {
+                const lookupKey = (col.rawTaskType || col.key || '').trim().toLowerCase();
+                const assignedRate = taskRatesMap?.[lookupKey];
+                return (
+                  <div
+                    key={col.key}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 5,
+                      gridColumn: col.key === 'lotNumber' ? '1 / -1' : 'auto',
+                    }}
+                  >
+                    <label style={getLabelStyle(isDark)}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        {col.label}
+                        {col.key === 'lotNumber' && <span style={{ color: '#ef4444', marginLeft: 3 }}>*</span>}
+                      </span>
+                      {assignedRate != null && Number(assignedRate) > 0 && (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: '#15803d',
+                            background: isDark ? 'rgba(22, 163, 74, 0.2)' : '#dcfce7',
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            marginLeft: 6,
+                          }}
+                          title="Wage rate assigned in Wages Payroll"
+                        >
+                          ₨ {Number(assignedRate).toLocaleString()}/pc
+                        </span>
+                      )}
+                    </label>
+                    {fieldByKey(col.key)}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
