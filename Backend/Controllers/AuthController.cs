@@ -46,7 +46,6 @@ public class AuthController : ControllerBase
 
     /// <summary>Seed or repair default users (admin, manager, viewer), roles, and permissions</summary>
     [HttpPost("seed-users")]
-    [HttpGet("seed-users")]
     [AllowAnonymous]
     public async Task<IActionResult> SeedUsers()
     {
