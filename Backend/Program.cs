@@ -10,6 +10,8 @@ using ClothingManager.Data;
 using ClothingManager.Models;
 using ClothingManager.Services;
 
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 var isIis = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_APPL_PATH"))
@@ -114,13 +116,13 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("Default"), sqlOptions =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Default"), npgsqlOptions =>
     {
-        sqlOptions.EnableRetryOnFailure(
+        npgsqlOptions.EnableRetryOnFailure(
             maxRetryCount: 5,
             maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorNumbersToAdd: null);
-        sqlOptions.CommandTimeout(60);
+            errorCodesToAdd: null);
+        npgsqlOptions.CommandTimeout(60);
     }));
 
 builder.Services.AddScoped<WorkerEntryService>();
@@ -173,223 +175,28 @@ try
         Console.WriteLine($"⚠️ Database migration warning: {migEx.Message}");
     }
 
-    // Create indexes if they don't exist (idempotent — safe to run on every startup)
-    db.Database.ExecuteSqlRaw(@"
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerEntries_WorkerId' AND object_id = OBJECT_ID('WorkerEntries'))
-            CREATE INDEX IX_WorkerEntries_WorkerId ON WorkerEntries(WorkerId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerEntries_LotId' AND object_id = OBJECT_ID('WorkerEntries'))
-            CREATE INDEX IX_WorkerEntries_LotId ON WorkerEntries(LotId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transactions_AccountId' AND object_id = OBJECT_ID('Transactions'))
-            CREATE INDEX IX_Transactions_AccountId ON Transactions(AccountId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transactions_Date' AND object_id = OBJECT_ID('Transactions'))
-            CREATE INDEX IX_Transactions_Date ON Transactions(Date);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WagePayments_WorkerId' AND object_id = OBJECT_ID('WagePayments'))
-            CREATE INDEX IX_WagePayments_WorkerId ON WagePayments(WorkerId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WageRates_WorkerId' AND object_id = OBJECT_ID('WageRates'))
-            CREATE INDEX IX_WageRates_WorkerId ON WageRates(WorkerId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerAdvances_WorkerId' AND object_id = OBJECT_ID('WorkerAdvances'))
-            CREATE INDEX IX_WorkerAdvances_WorkerId ON WorkerAdvances(WorkerId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Sales_CustomerId' AND object_id = OBJECT_ID('Sales'))
-            CREATE INDEX IX_Sales_CustomerId ON Sales(CustomerId);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SalePayments_SaleId' AND object_id = OBJECT_ID('SalePayments'))
-            CREATE INDEX IX_SalePayments_SaleId ON SalePayments(SaleId);
-    ");
-    Console.WriteLine("✅ Database indexes verified");
-
-    // Create any tables that may be missing (no migration files — idempotent)
-    db.Database.ExecuteSqlRaw(@"
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WageRates')
-        CREATE TABLE WageRates (
-            Id          INT IDENTITY(1,1) PRIMARY KEY,
-            WorkerId    INT NOT NULL,
-            TaskType    NVARCHAR(100) NOT NULL,
-            RatePerPiece DECIMAL(18,2) NOT NULL,
-            IsActive    BIT NOT NULL DEFAULT 1,
-            CreatedAt   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            UpdatedAt   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_WageRates_Worker FOREIGN KEY (WorkerId) REFERENCES Workers(Id)
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WagePayments')
-        CREATE TABLE WagePayments (
-            Id          INT IDENTITY(1,1) PRIMARY KEY,
-            WorkerId    INT NOT NULL,
-            GrossAmount DECIMAL(18,2) NOT NULL,
-            Deductions  DECIMAL(18,2) NOT NULL DEFAULT 0,
-            NetAmount   DECIMAL(18,2) NOT NULL,
-            Notes       NVARCHAR(MAX) NULL,
-            PeriodFrom  DATETIME2 NOT NULL,
-            PeriodTo    DATETIME2 NOT NULL,
-            PaidAt      DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CreatedAt   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_WagePayments_Worker FOREIGN KEY (WorkerId) REFERENCES Workers(Id)
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WorkerAdvances')
-        CREATE TABLE WorkerAdvances (
-            Id          INT IDENTITY(1,1) PRIMARY KEY,
-            WorkerId    INT NOT NULL,
-            Amount      DECIMAL(18,2) NOT NULL,
-            Notes       NVARCHAR(MAX) NULL,
-            AdvanceDate DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            IsSettled   BIT NOT NULL DEFAULT 0,
-            SettledAt   DATETIME2 NULL,
-            CreatedAt   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_WorkerAdvances_Worker FOREIGN KEY (WorkerId) REFERENCES Workers(Id)
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Customers')
-        CREATE TABLE Customers (
-            Id        INT IDENTITY(1,1) PRIMARY KEY,
-            Name      NVARCHAR(200) NOT NULL,
-            Phone     NVARCHAR(50)  NULL,
-            Address   NVARCHAR(500) NULL,
-            Notes     NVARCHAR(MAX) NULL,
-            IsActive  BIT NOT NULL DEFAULT 1,
-            CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Suppliers')
-        CREATE TABLE Suppliers (
-            Id            INT IDENTITY(1,1) PRIMARY KEY,
-            Name          NVARCHAR(200) NOT NULL,
-            Phone         NVARCHAR(50)  NULL,
-            Address       NVARCHAR(500) NULL,
-            Notes         NVARCHAR(MAX) NULL,
-            IsActive      BIT NOT NULL DEFAULT 1,
-            PurchaseCount INT NOT NULL DEFAULT 0,
-            CreatedAt     DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'BagPurchases')
-        CREATE TABLE BagPurchases (
-            Id           INT IDENTITY(1,1) PRIMARY KEY,
-            BagNumber    NVARCHAR(100) NOT NULL,
-            Material     NVARCHAR(100) NOT NULL,
-            BagType      NVARCHAR(100) NOT NULL,
-            Quantity     INT NOT NULL,
-            UnitPrice    DECIMAL(18,2) NULL,
-            PurchaseDate DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            SupplierId   INT NULL,
-            Notes        NVARCHAR(MAX) NULL,
-            CreatedAt    DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_BagPurchases_Supplier FOREIGN KEY (SupplierId) REFERENCES Suppliers(Id)
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'InventoryUsages')
-        CREATE TABLE InventoryUsages (
-            Id            INT IDENTITY(1,1) PRIMARY KEY,
-            LotId         INT NOT NULL,
-            BagPurchaseId INT NOT NULL,
-            QuantityUsed  INT NOT NULL,
-            UsageDate     DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            Notes         NVARCHAR(MAX) NULL,
-            CreatedAt     DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_InventoryUsages_Lot         FOREIGN KEY (LotId)         REFERENCES Lots(Id),
-            CONSTRAINT FK_InventoryUsages_BagPurchase FOREIGN KEY (BagPurchaseId) REFERENCES BagPurchases(Id)
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Sales')
-        CREATE TABLE Sales (
-            Id           INT IDENTITY(1,1) PRIMARY KEY,
-            LotId        INT NOT NULL,
-            CustomerId   INT NOT NULL,
-            Quantity     INT NOT NULL,
-            RatePerPiece DECIMAL(18,2) NOT NULL,
-            TotalAmount  DECIMAL(18,2) NOT NULL,
-            Discount     DECIMAL(18,2) NOT NULL DEFAULT 0,
-            NetAmount    DECIMAL(18,2) NOT NULL,
-            SaleDate     DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            Notes        NVARCHAR(MAX) NULL,
-            CreatedAt    DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_Sales_Lot      FOREIGN KEY (LotId)       REFERENCES Lots(Id),
-            CONSTRAINT FK_Sales_Customer FOREIGN KEY (CustomerId)  REFERENCES Customers(Id)
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SalePayments')
-        CREATE TABLE SalePayments (
-            Id          INT IDENTITY(1,1) PRIMARY KEY,
-            SaleId      INT NOT NULL,
-            Amount      DECIMAL(18,2) NOT NULL,
-            PaymentDate DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            Notes       NVARCHAR(MAX) NULL,
-            CreatedAt   DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-            CONSTRAINT FK_SalePayments_Sale FOREIGN KEY (SaleId) REFERENCES Sales(Id)
-        );
-    ");
-    Console.WriteLine("✅ Missing tables created (if any)");
-
-    // Create AuditLogs table if missing
-    db.Database.ExecuteSqlRaw(@"
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'AuditLogs')
-        CREATE TABLE AuditLogs (
-            Id            INT IDENTITY(1,1) PRIMARY KEY,
-            UserId        INT NULL,
-            UserName      NVARCHAR(200) NOT NULL DEFAULT '',
-            Action        NVARCHAR(50)  NOT NULL DEFAULT '',
-            Module        NVARCHAR(100) NOT NULL DEFAULT '',
-            EntityType    NVARCHAR(100) NOT NULL DEFAULT '',
-            EntityId      INT NULL,
-            EntityName    NVARCHAR(500) NULL,
-            ChangeSummary NVARCHAR(MAX) NULL,
-            Timestamp     DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-        );
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditLogs_Timestamp' AND object_id = OBJECT_ID('AuditLogs'))
-            CREATE INDEX IX_AuditLogs_Timestamp ON AuditLogs(Timestamp DESC);
-        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditLogs_Module' AND object_id = OBJECT_ID('AuditLogs'))
-            CREATE INDEX IX_AuditLogs_Module ON AuditLogs(Module);
-    ");
-    Console.WriteLine("✅ AuditLogs table verified");
-
-    // Add PersonType column to Workers and IsActive column to Sizes, Colors, Machines, Lots if missing
-    db.Database.ExecuteSqlRaw(@"
-        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Workers') AND name = 'PersonType')
-            ALTER TABLE Workers ADD PersonType NVARCHAR(50) NOT NULL DEFAULT 'Worker';
-        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Sizes') AND name = 'IsActive')
-            ALTER TABLE Sizes ADD IsActive BIT NOT NULL DEFAULT 1;
-        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Colors') AND name = 'IsActive')
-            ALTER TABLE Colors ADD IsActive BIT NOT NULL DEFAULT 1;
-        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Machines') AND name = 'IsActive')
-            ALTER TABLE Machines ADD IsActive BIT NOT NULL DEFAULT 1;
-        IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Lots') AND name = 'IsActive')
-            ALTER TABLE Lots ADD IsActive BIT NOT NULL DEFAULT 1;
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'TaskTypes')
-        CREATE TABLE TaskTypes (
-            Id       INT IDENTITY(1,1) PRIMARY KEY,
-            Name     NVARCHAR(100) NOT NULL,
-            IsActive BIT NOT NULL DEFAULT 1
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Materials')
-        CREATE TABLE Materials (
-            Id       INT IDENTITY(1,1) PRIMARY KEY,
-            Name     NVARCHAR(100) NOT NULL,
-            IsActive BIT NOT NULL DEFAULT 1
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'BagTypes')
-        CREATE TABLE BagTypes (
-            Id       INT IDENTITY(1,1) PRIMARY KEY,
-            Name     NVARCHAR(100) NOT NULL,
-            IsActive BIT NOT NULL DEFAULT 1
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WorkerRoles')
-        CREATE TABLE WorkerRoles (
-            Id       INT IDENTITY(1,1) PRIMARY KEY,
-            Name     NVARCHAR(100) NOT NULL,
-            IsActive BIT NOT NULL DEFAULT 1
-        );
-
-        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'LotStages')
-        CREATE TABLE LotStages (
-            Id       INT IDENTITY(1,1) PRIMARY KEY,
-            Name     NVARCHAR(100) NOT NULL,
-            IsActive BIT NOT NULL DEFAULT 1
-        );
-    ");
-    Console.WriteLine("✅ Workers.PersonType and Master IsActive columns verified");
+    // Create indexes if they don't exist (idempotent — PostgreSQL)
+    try
+    {
+        db.Database.ExecuteSqlRaw(@"
+            CREATE INDEX IF NOT EXISTS ""IX_WorkerEntries_WorkerId"" ON ""WorkerEntries""(""WorkerId"");
+            CREATE INDEX IF NOT EXISTS ""IX_WorkerEntries_LotId"" ON ""WorkerEntries""(""LotId"");
+            CREATE INDEX IF NOT EXISTS ""IX_Transactions_AccountId"" ON ""Transactions""(""AccountId"");
+            CREATE INDEX IF NOT EXISTS ""IX_Transactions_Date"" ON ""Transactions""(""Date"");
+            CREATE INDEX IF NOT EXISTS ""IX_WagePayments_WorkerId"" ON ""WagePayments""(""WorkerId"");
+            CREATE INDEX IF NOT EXISTS ""IX_WageRates_WorkerId"" ON ""WageRates""(""WorkerId"");
+            CREATE INDEX IF NOT EXISTS ""IX_WorkerAdvances_WorkerId"" ON ""WorkerAdvances""(""WorkerId"");
+            CREATE INDEX IF NOT EXISTS ""IX_Sales_CustomerId"" ON ""Sales""(""CustomerId"");
+            CREATE INDEX IF NOT EXISTS ""IX_SalePayments_SaleId"" ON ""SalePayments""(""SaleId"");
+            CREATE INDEX IF NOT EXISTS ""IX_AuditLogs_Timestamp"" ON ""AuditLogs""(""Timestamp"" DESC);
+            CREATE INDEX IF NOT EXISTS ""IX_AuditLogs_Module"" ON ""AuditLogs""(""Module"");
+        ");
+        Console.WriteLine("✅ Database indexes verified");
+    }
+    catch (Exception idxEx)
+    {
+        Console.WriteLine($"⚠️ Database indexes warning: {idxEx.Message}");
+    }
 
     // Apply complete correct permission matrix — inserts missing AND corrects wrong values
     var correctPerms = new Dictionary<string, Dictionary<string, bool>>
