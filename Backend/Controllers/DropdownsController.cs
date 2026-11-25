@@ -122,7 +122,7 @@ public class LotsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] int? sizeId, [FromQuery] string? material, [FromQuery] string? status, [FromQuery] bool includeInactive = false)
     {
-        var q = _db.Lots.Include(l => l.Size).AsQueryable();
+        var q = _db.Lots.AsNoTracking().Include(l => l.Size).AsQueryable();
         if (!includeInactive) q = q.Where(l => l.IsActive);
         if (sizeId.HasValue) q = q.Where(l => l.SizeId == sizeId.Value);
         if (!string.IsNullOrWhiteSpace(material)) q = q.Where(l => l.Material == material);

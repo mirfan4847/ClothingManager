@@ -9,6 +9,8 @@ namespace ClothingManager.Data;
 public class AppDbContext : DbContext
 {
     public int? SelectedYear { get; }
+    public DateTime SelectedYearStart { get; }
+    public DateTime SelectedYearEnd { get; }
 
     public AppDbContext(DbContextOptions<AppDbContext> options, IHttpContextAccessor? httpContextAccessor = null) : base(options)
     {
@@ -16,6 +18,8 @@ public class AppDbContext : DbContext
         if (int.TryParse(rawYear, out var parsedYear) && parsedYear >= 2000 && parsedYear <= 2100)
         {
             SelectedYear = parsedYear;
+            SelectedYearStart = new DateTime(parsedYear, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            SelectedYearEnd   = new DateTime(parsedYear + 1, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         }
     }
 
@@ -206,42 +210,44 @@ public class AppDbContext : DbContext
             new Account { Id = 3, Name = "Labour Expense",  CategoryId = 2, Balance = 0, Description = "Labour payment expenses", IsActive = true },
             new Account { Id = 4, Name = "Material Cost",   CategoryId = 2, Balance = 0, Description = "Raw material costs",      IsActive = true });
 
-        // ── Global Working-Year Query Filters (filtered when X-Working-Year header is provided) ──
+        // ── Global Working-Year Query Filters (SARGable range predicates for SQL Server index seeks) ──
         modelBuilder.Entity<Worker>()
-            .HasQueryFilter(w => !SelectedYear.HasValue || w.CreatedAt.Year == SelectedYear.Value);
+            .HasQueryFilter(w => !SelectedYear.HasValue || (w.CreatedAt >= SelectedYearStart && w.CreatedAt < SelectedYearEnd));
 
         modelBuilder.Entity<WageRate>()
-            .HasQueryFilter(wr => !SelectedYear.HasValue || wr.CreatedAt.Year == SelectedYear.Value);
+            .HasQueryFilter(wr => !SelectedYear.HasValue || (wr.CreatedAt >= SelectedYearStart && wr.CreatedAt < SelectedYearEnd));
 
         modelBuilder.Entity<Lot>()
-            .HasQueryFilter(l => !SelectedYear.HasValue || l.CreatedAt.Year == SelectedYear.Value);
+            .HasQueryFilter(l => !SelectedYear.HasValue || (l.CreatedAt >= SelectedYearStart && l.CreatedAt < SelectedYearEnd));
 
         modelBuilder.Entity<WorkerEntry>()
-            .HasQueryFilter(e => !SelectedYear.HasValue || (e.DateCompleted.HasValue ? e.DateCompleted.Value.Year == SelectedYear.Value : e.CreatedAt.Year == SelectedYear.Value));
+            .HasQueryFilter(e => !SelectedYear.HasValue || (e.DateCompleted.HasValue
+                ? (e.DateCompleted.Value >= SelectedYearStart && e.DateCompleted.Value < SelectedYearEnd)
+                : (e.CreatedAt >= SelectedYearStart && e.CreatedAt < SelectedYearEnd)));
 
         modelBuilder.Entity<WagePayment>()
-            .HasQueryFilter(wp => !SelectedYear.HasValue || wp.PaidAt.Year == SelectedYear.Value);
+            .HasQueryFilter(wp => !SelectedYear.HasValue || (wp.PaidAt >= SelectedYearStart && wp.PaidAt < SelectedYearEnd));
 
         modelBuilder.Entity<WorkerAdvance>()
-            .HasQueryFilter(wa => !SelectedYear.HasValue || wa.AdvanceDate.Year == SelectedYear.Value);
+            .HasQueryFilter(wa => !SelectedYear.HasValue || (wa.AdvanceDate >= SelectedYearStart && wa.AdvanceDate < SelectedYearEnd));
 
         modelBuilder.Entity<BagPurchase>()
-            .HasQueryFilter(bp => !SelectedYear.HasValue || bp.PurchaseDate.Year == SelectedYear.Value);
+            .HasQueryFilter(bp => !SelectedYear.HasValue || (bp.PurchaseDate >= SelectedYearStart && bp.PurchaseDate < SelectedYearEnd));
 
         modelBuilder.Entity<InventoryUsage>()
-            .HasQueryFilter(iu => !SelectedYear.HasValue || iu.UsageDate.Year == SelectedYear.Value);
+            .HasQueryFilter(iu => !SelectedYear.HasValue || (iu.UsageDate >= SelectedYearStart && iu.UsageDate < SelectedYearEnd));
 
         modelBuilder.Entity<Sale>()
-            .HasQueryFilter(s => !SelectedYear.HasValue || s.SaleDate.Year == SelectedYear.Value);
+            .HasQueryFilter(s => !SelectedYear.HasValue || (s.SaleDate >= SelectedYearStart && s.SaleDate < SelectedYearEnd));
 
         modelBuilder.Entity<SalePayment>()
-            .HasQueryFilter(sp => !SelectedYear.HasValue || sp.PaymentDate.Year == SelectedYear.Value);
+            .HasQueryFilter(sp => !SelectedYear.HasValue || (sp.PaymentDate >= SelectedYearStart && sp.PaymentDate < SelectedYearEnd));
 
         modelBuilder.Entity<Transaction>()
-            .HasQueryFilter(t => !SelectedYear.HasValue || t.Date.Year == SelectedYear.Value);
+            .HasQueryFilter(t => !SelectedYear.HasValue || (t.Date >= SelectedYearStart && t.Date < SelectedYearEnd));
 
         modelBuilder.Entity<AuditLog>()
-            .HasQueryFilter(a => !SelectedYear.HasValue || a.Timestamp.Year == SelectedYear.Value);
+            .HasQueryFilter(a => !SelectedYear.HasValue || (a.Timestamp >= SelectedYearStart && a.Timestamp < SelectedYearEnd));
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

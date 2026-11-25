@@ -14,7 +14,7 @@ public class WageService
 
     public async Task<List<WageRateDto>> GetRatesAsync(int? workerId = null)
     {
-        var q = _db.WageRates.Include(r => r.Worker).AsQueryable();
+        var q = _db.WageRates.AsNoTracking().AsQueryable();
         if (workerId.HasValue) q = q.Where(r => r.WorkerId == workerId.Value);
         return await q.OrderBy(r => r.WorkerId).ThenBy(r => r.TaskType)
             .Select(r => new WageRateDto
@@ -78,40 +78,46 @@ public class WageService
 
     public async Task<WageCalculationResultDto?> CalculateAsync(int workerId, DateTime from, DateTime to)
     {
-        var worker = await _db.Workers.FindAsync(workerId);
+        var worker = await _db.Workers.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workerId);
         if (worker == null) return null;
 
         var rates = await _db.WageRates
+            .AsNoTracking()
             .Where(r => r.WorkerId == workerId && r.IsActive)
             .ToListAsync();
 
-        // All entries in date range for this worker
         var entries = await _db.WorkerEntries
+            .AsNoTracking()
             .Where(e => e.WorkerId == workerId
                      && e.CreatedAt >= from
                      && e.CreatedAt <= to)
             .ToListAsync();
 
+        return BuildCalculation(worker, rates, entries, from, to);
+    }
+
+    private static readonly Dictionary<string, Func<WorkerEntry, int?>> TaskColumns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Front"]      = e => e.Front,
+        ["Bazo"]       = e => e.Bazo,
+        ["Tape"]       = e => e.Tape,
+        ["Pocket"]     = e => e.Pocket,
+        ["Gala"]       = e => e.Gala,
+        ["Lable"]      = e => e.Lable,
+        ["Moda"]       = e => e.Moda,
+        ["Quantity"]   = e => e.Quantity,
+        ["TotalPiece"] = e => e.TotalPiece,
+    };
+
+    private static WageCalculationResultDto BuildCalculation(
+        Worker worker, List<WageRate> rates, List<WorkerEntry> entries, DateTime from, DateTime to)
+    {
         var breakdown = new List<WageBreakdownItemDto>();
         decimal gross = 0;
 
-        // Map task column names to their values per entry
-        var taskColumns = new Dictionary<string, Func<WorkerEntry, int?>>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Front"]      = e => e.Front,
-            ["Bazo"]       = e => e.Bazo,
-            ["Tape"]       = e => e.Tape,
-            ["Pocket"]     = e => e.Pocket,
-            ["Gala"]       = e => e.Gala,
-            ["Lable"]      = e => e.Lable,
-            ["Moda"]       = e => e.Moda,
-            ["Quantity"]   = e => e.Quantity,
-            ["TotalPiece"] = e => e.TotalPiece,
-        };
-
         foreach (var rate in rates)
         {
-            Func<WorkerEntry, int?> getter = taskColumns.TryGetValue(rate.TaskType, out var colGetter)
+            Func<WorkerEntry, int?> getter = TaskColumns.TryGetValue(rate.TaskType, out var colGetter)
                 ? colGetter
                 : (e => e.TotalPiece ?? e.Quantity);
             int totalPieces = entries.Sum(e => getter(e) ?? 0);
@@ -130,7 +136,7 @@ public class WageService
 
         return new WageCalculationResultDto
         {
-            WorkerId    = workerId,
+            WorkerId    = worker.Id,
             WorkerName  = worker.Name,
             WorkerPhone = worker.Phone,
             PeriodFrom  = from,
@@ -144,26 +150,44 @@ public class WageService
 
     public async Task<WageSummaryDto> GetSummaryAsync()
     {
-        var payments  = await _db.WagePayments.Include(p => p.Worker).ToListAsync();
-        var advances  = await _db.WorkerAdvances.Where(a => !a.IsSettled).ToListAsync();
+        var payStats = await _db.WagePayments
+            .AsNoTracking()
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TotalPaid       = g.Sum(p => p.GrossAmount),
+                TotalDeductions = g.Sum(p => p.Deductions),
+                TotalNet        = g.Sum(p => p.NetAmount),
+                TotalPayments   = g.Count(),
+            })
+            .FirstOrDefaultAsync();
+
+        var totalOutstandingAdvances = await _db.WorkerAdvances
+            .AsNoTracking()
+            .Where(a => !a.IsSettled)
+            .SumAsync(a => (decimal?)a.Amount) ?? 0m;
+
+        var recentPayments = await _db.WagePayments
+            .AsNoTracking()
+            .Include(p => p.Worker)
+            .OrderByDescending(p => p.PaidAt)
+            .Take(10)
+            .ToListAsync();
+
         return new WageSummaryDto
         {
-            TotalPaid                = payments.Sum(p => p.GrossAmount),
-            TotalDeductions          = payments.Sum(p => p.Deductions),
-            TotalNet                 = payments.Sum(p => p.NetAmount),
-            TotalPayments            = payments.Count,
-            TotalOutstandingAdvances = advances.Sum(a => a.Amount),
-            RecentPayments           = payments
-                .OrderByDescending(p => p.PaidAt)
-                .Take(10)
-                .Select(MapPayment)
-                .ToList(),
+            TotalPaid                = payStats?.TotalPaid ?? 0m,
+            TotalDeductions          = payStats?.TotalDeductions ?? 0m,
+            TotalNet                 = payStats?.TotalNet ?? 0m,
+            TotalPayments            = payStats?.TotalPayments ?? 0,
+            TotalOutstandingAdvances = totalOutstandingAdvances,
+            RecentPayments           = recentPayments.Select(MapPayment).ToList(),
         };
     }
 
     public async Task<List<WagePaymentDto>> GetPaymentsAsync(int? workerId, DateTime? from, DateTime? to)
     {
-        var q = _db.WagePayments.Include(p => p.Worker).AsQueryable();
+        var q = _db.WagePayments.AsNoTracking().Include(p => p.Worker).AsQueryable();
         if (workerId.HasValue) q = q.Where(p => p.WorkerId == workerId.Value);
         if (from.HasValue)     q = q.Where(p => p.PaidAt >= from.Value);
         if (to.HasValue)       q = q.Where(p => p.PaidAt <= to.Value);
@@ -198,17 +222,34 @@ public class WageService
         return true;
     }
 
-    // ── Bulk calculation (all workers) ──────────────────────────────────────
+    // ── Bulk calculation (all workers — 3 batched queries instead of 3N+1) ──
 
     public async Task<AllWorkersWageDto> CalculateAllAsync(DateTime from, DateTime to)
     {
-        var workers = await _db.Workers.Where(w => w.IsActive).ToListAsync();
-        var results = new List<WageCalculationResultDto>();
+        var workers = await _db.Workers.AsNoTracking().Where(w => w.IsActive).ToListAsync();
+        var workerIds = workers.Select(w => w.Id).ToList();
 
+        var allRates = await _db.WageRates
+            .AsNoTracking()
+            .Where(r => workerIds.Contains(r.WorkerId) && r.IsActive)
+            .ToListAsync();
+
+        var allEntries = await _db.WorkerEntries
+            .AsNoTracking()
+            .Where(e => workerIds.Contains(e.WorkerId) && e.CreatedAt >= from && e.CreatedAt <= to)
+            .ToListAsync();
+
+        var ratesByWorker   = allRates.GroupBy(r => r.WorkerId).ToDictionary(g => g.Key, g => g.ToList());
+        var entriesByWorker = allEntries.GroupBy(e => e.WorkerId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var results = new List<WageCalculationResultDto>();
         foreach (var w in workers)
         {
-            var result = await CalculateAsync(w.Id, from, to);
-            if (result != null && result.GrossAmount > 0)
+            if (!ratesByWorker.TryGetValue(w.Id, out var wRates) || wRates.Count == 0) continue;
+            if (!entriesByWorker.TryGetValue(w.Id, out var wEntries) || wEntries.Count == 0) continue;
+
+            var result = BuildCalculation(w, wRates, wEntries, from, to);
+            if (result.GrossAmount > 0)
                 results.Add(result);
         }
 
@@ -226,7 +267,7 @@ public class WageService
 
     public async Task<List<WorkerAdvanceDto>> GetAdvancesAsync(int? workerId, bool unsettledOnly = false)
     {
-        var q = _db.WorkerAdvances.Include(a => a.Worker).AsQueryable();
+        var q = _db.WorkerAdvances.AsNoTracking().Include(a => a.Worker).AsQueryable();
         if (workerId.HasValue) q = q.Where(a => a.WorkerId == workerId.Value);
         if (unsettledOnly)     q = q.Where(a => !a.IsSettled);
         return (await q.OrderByDescending(a => a.AdvanceDate).ToListAsync())

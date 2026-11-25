@@ -25,7 +25,7 @@ public class AuditLogsController : ControllerBase
         [FromQuery] int page     = 1,
         [FromQuery] int pageSize = 50)
     {
-        var q = _db.AuditLogs.AsQueryable();
+        var q = _db.AuditLogs.AsNoTracking().AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(module))     q = q.Where(l => l.Module == module);
         if (!string.IsNullOrWhiteSpace(action))     q = q.Where(l => l.Action == action);
@@ -56,7 +56,7 @@ public class AuditLogsController : ControllerBase
     [HttpGet("stats")]
     public async Task<IActionResult> GetStats([FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
-        var q = _db.AuditLogs.AsQueryable();
+        var q = _db.AuditLogs.AsNoTracking().AsQueryable();
         if (from.HasValue) q = q.Where(l => l.Timestamp >= from.Value);
         if (to.HasValue)   q = q.Where(l => l.Timestamp <= to.Value.AddDays(1));
 

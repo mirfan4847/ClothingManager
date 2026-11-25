@@ -21,11 +21,16 @@ public class InventoryController : ControllerBase
     [HttpGet("summary")]
     public async Task<IActionResult> Summary()
     {
-        var purchases = await _db.BagPurchases.ToListAsync();
-        var usages    = await _db.InventoryUsages.ToListAsync();
+        var purchases = await _db.BagPurchases
+            .AsNoTracking()
+            .Select(p => new { p.Id, p.Quantity })
+            .ToListAsync();
 
-        var usedById  = usages.GroupBy(u => u.BagPurchaseId)
-                              .ToDictionary(g => g.Key, g => g.Sum(u => u.QuantityUsed));
+        var usedById = await _db.InventoryUsages
+            .AsNoTracking()
+            .GroupBy(u => u.BagPurchaseId)
+            .Select(g => new { BagPurchaseId = g.Key, TotalUsed = g.Sum(u => u.QuantityUsed) })
+            .ToDictionaryAsync(x => x.BagPurchaseId, x => x.TotalUsed);
 
         var stocks = purchases.Select(p => {
             var used      = usedById.GetValueOrDefault(p.Id, 0);
@@ -48,14 +53,13 @@ public class InventoryController : ControllerBase
     [HttpGet("stock")]
     public async Task<IActionResult> Stock([FromQuery] string? material)
     {
-        var usages = await _db.InventoryUsages
+        var usedById = await _db.InventoryUsages
+            .AsNoTracking()
             .GroupBy(u => u.BagPurchaseId)
             .Select(g => new { BagPurchaseId = g.Key, TotalUsed = g.Sum(u => u.QuantityUsed) })
-            .ToListAsync();
+            .ToDictionaryAsync(x => x.BagPurchaseId, x => x.TotalUsed);
 
-        var usedById = usages.ToDictionary(x => x.BagPurchaseId, x => x.TotalUsed);
-
-        var q = _db.BagPurchases.Include(p => p.Supplier).AsQueryable();
+        var q = _db.BagPurchases.AsNoTracking().Include(p => p.Supplier).AsQueryable();
         if (!string.IsNullOrWhiteSpace(material)) q = q.Where(p => p.Material == material);
 
         var purchases = await q.OrderBy(p => p.Material).ThenBy(p => p.BagNumber).ToListAsync();

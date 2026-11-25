@@ -26,7 +26,7 @@ public class PurchasesController : ControllerBase
         [FromQuery] string? bagNumber,
         [FromQuery] int? supplierId)
     {
-        var q = _db.BagPurchases.Include(p => p.Supplier).AsQueryable();
+        var q = _db.BagPurchases.AsNoTracking().Include(p => p.Supplier).AsQueryable();
         if (!string.IsNullOrWhiteSpace(material))  q = q.Where(p => p.Material == material);
         if (!string.IsNullOrWhiteSpace(bagType))   q = q.Where(p => p.BagType == bagType);
         if (!string.IsNullOrWhiteSpace(bagNumber)) q = q.Where(p => p.BagNumber.Contains(bagNumber));

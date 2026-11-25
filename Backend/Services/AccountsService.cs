@@ -13,13 +13,14 @@ public class AccountsService
     // ── Categories ──────────────────────────────
     public async Task<List<AccountCategoryDto>> GetCategoriesAsync()
         => await _db.AccountCategories
+            .AsNoTracking()
             .Select(c => new AccountCategoryDto { Id = c.Id, Name = c.Name, Type = c.Type })
             .ToListAsync();
 
     // ── Accounts ────────────────────────────────
     public async Task<List<AccountDto>> GetAccountsAsync()
         => await _db.Accounts
-            .Include(a => a.Category)
+            .AsNoTracking()
             .Select(a => new AccountDto
             {
                 Id = a.Id, Name = a.Name, CategoryId = a.CategoryId,
@@ -30,15 +31,17 @@ public class AccountsService
 
     public async Task<AccountDto?> GetAccountByIdAsync(int id)
     {
-        var a = await _db.Accounts.Include(a => a.Category).FirstOrDefaultAsync(a => a.Id == id);
-        if (a == null) return null;
-        return new AccountDto
-        {
-            Id = a.Id, Name = a.Name, CategoryId = a.CategoryId,
-            CategoryName = a.Category.Name, CategoryType = a.Category.Type,
-            Balance = a.Balance, Description = a.Description,
-            IsActive = a.IsActive, CreatedAt = a.CreatedAt
-        };
+        return await _db.Accounts
+            .AsNoTracking()
+            .Where(a => a.Id == id)
+            .Select(a => new AccountDto
+            {
+                Id = a.Id, Name = a.Name, CategoryId = a.CategoryId,
+                CategoryName = a.Category.Name, CategoryType = a.Category.Type,
+                Balance = a.Balance, Description = a.Description,
+                IsActive = a.IsActive, CreatedAt = a.CreatedAt
+            })
+            .FirstOrDefaultAsync();
     }
 
     public async Task<AccountDto> CreateAccountAsync(AccountCreateDto dto)
@@ -91,7 +94,7 @@ public class AccountsService
     // ── Transactions ─────────────────────────────
     public async Task<List<TransactionDto>> GetTransactionsAsync(int? accountId, DateTime? from, DateTime? to)
     {
-        var query = _db.Transactions.Include(t => t.Account).AsQueryable();
+        var query = _db.Transactions.AsNoTracking().Include(t => t.Account).AsQueryable();
 
         if (accountId.HasValue) query = query.Where(t => t.AccountId == accountId);
         if (from.HasValue)      query = query.Where(t => t.Date >= from);

@@ -23,6 +23,7 @@ public class CustomersController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var customers = await _db.Customers
+            .AsNoTracking()
             .OrderBy(c => c.Name)
             .Select(c => new CustomerDto
             {

@@ -21,7 +21,7 @@ public class WorkersController : ControllerBase
 
     [HttpGet]
     public async Task<IActionResult> GetAll()
-        => Ok(await _db.Workers.Select(w => new {
+        => Ok(await _db.Workers.AsNoTracking().Select(w => new {
             w.Id, w.Name, w.SheetType, w.IsActive, w.PersonType,
             Phone = w.Phone ?? "", JoinDate = w.JoinDate ?? ""
         }).ToListAsync());

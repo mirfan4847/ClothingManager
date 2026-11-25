@@ -10,8 +10,6 @@ using ClothingManager.Data;
 using ClothingManager.Models;
 using ClothingManager.Services;
 
-AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
-
 var builder = WebApplication.CreateBuilder(args);
 
 var isIis = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_APPL_PATH"))
@@ -24,6 +22,7 @@ if (!isIis)
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddMemoryCache();
 builder.Services.AddResponseCompression(opts =>
 {
     opts.EnableForHttps = true;
@@ -116,13 +115,13 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default"), npgsqlOptions =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("Default"), sqlOptions =>
     {
-        npgsqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 5,
-            maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorCodesToAdd: null);
-        npgsqlOptions.CommandTimeout(60);
+        sqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 2,
+            maxRetryDelay: TimeSpan.FromSeconds(2),
+            errorNumbersToAdd: null);
+        sqlOptions.CommandTimeout(30);
     }));
 
 builder.Services.AddScoped<WorkerEntryService>();
@@ -159,145 +158,120 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 
-// ✅ Safe migrate - won't crash if DB is already up to date
+// ✅ Fast startup: verify SQL Server indexes and ensure seed data
 try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    try
-    {
-        db.Database.Migrate();
-        Console.WriteLine("✅ Database migration successful");
-    }
-    catch (Exception migEx)
-    {
-        Console.WriteLine($"⚠️ Database migration warning: {migEx.Message}");
-    }
-
-    // Create indexes if they don't exist (idempotent — PostgreSQL)
+    // Ensure all SQL Server performance indexes exist (idempotent)
     try
     {
         db.Database.ExecuteSqlRaw(@"
-            CREATE INDEX IF NOT EXISTS ""IX_WorkerEntries_WorkerId"" ON ""WorkerEntries""(""WorkerId"");
-            CREATE INDEX IF NOT EXISTS ""IX_WorkerEntries_LotId"" ON ""WorkerEntries""(""LotId"");
-            CREATE INDEX IF NOT EXISTS ""IX_Transactions_AccountId"" ON ""Transactions""(""AccountId"");
-            CREATE INDEX IF NOT EXISTS ""IX_Transactions_Date"" ON ""Transactions""(""Date"");
-            CREATE INDEX IF NOT EXISTS ""IX_WagePayments_WorkerId"" ON ""WagePayments""(""WorkerId"");
-            CREATE INDEX IF NOT EXISTS ""IX_WageRates_WorkerId"" ON ""WageRates""(""WorkerId"");
-            CREATE INDEX IF NOT EXISTS ""IX_WorkerAdvances_WorkerId"" ON ""WorkerAdvances""(""WorkerId"");
-            CREATE INDEX IF NOT EXISTS ""IX_Sales_CustomerId"" ON ""Sales""(""CustomerId"");
-            CREATE INDEX IF NOT EXISTS ""IX_SalePayments_SaleId"" ON ""SalePayments""(""SaleId"");
-            CREATE INDEX IF NOT EXISTS ""IX_AuditLogs_Timestamp"" ON ""AuditLogs""(""Timestamp"" DESC);
-            CREATE INDEX IF NOT EXISTS ""IX_AuditLogs_Module"" ON ""AuditLogs""(""Module"");
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerEntries_WorkerId_CreatedAt' AND object_id = OBJECT_ID('dbo.WorkerEntries'))
+                CREATE NONCLUSTERED INDEX IX_WorkerEntries_WorkerId_CreatedAt ON dbo.WorkerEntries(WorkerId, CreatedAt DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerEntries_LotId_WorkerId_CreatedAt' AND object_id = OBJECT_ID('dbo.WorkerEntries'))
+                CREATE NONCLUSTERED INDEX IX_WorkerEntries_LotId_WorkerId_CreatedAt ON dbo.WorkerEntries(LotId, WorkerId, CreatedAt DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerEntries_DateCompleted' AND object_id = OBJECT_ID('dbo.WorkerEntries'))
+                CREATE NONCLUSTERED INDEX IX_WorkerEntries_DateCompleted ON dbo.WorkerEntries(DateCompleted);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_LotNumber' AND object_id = OBJECT_ID('dbo.Lots'))
+                CREATE NONCLUSTERED INDEX IX_Lots_LotNumber ON dbo.Lots(LotNumber);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_IsActive_Status' AND object_id = OBJECT_ID('dbo.Lots'))
+                CREATE NONCLUSTERED INDEX IX_Lots_IsActive_Status ON dbo.Lots(IsActive, Status);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_CreatedAt' AND object_id = OBJECT_ID('dbo.Lots'))
+                CREATE NONCLUSTERED INDEX IX_Lots_CreatedAt ON dbo.Lots(CreatedAt);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Workers_IsActive_PersonType' AND object_id = OBJECT_ID('dbo.Workers'))
+                CREATE NONCLUSTERED INDEX IX_Workers_IsActive_PersonType ON dbo.Workers(IsActive, PersonType);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Users_Username_IsActive' AND object_id = OBJECT_ID('dbo.Users'))
+                CREATE NONCLUSTERED INDEX IX_Users_Username_IsActive ON dbo.Users(Username, IsActive);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Roles_Name' AND object_id = OBJECT_ID('dbo.Roles'))
+                CREATE NONCLUSTERED INDEX IX_Roles_Name ON dbo.Roles(Name);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_RolePermissions_RoleId' AND object_id = OBJECT_ID('dbo.RolePermissions'))
+                CREATE NONCLUSTERED INDEX IX_RolePermissions_RoleId ON dbo.RolePermissions(RoleId);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transactions_AccountId_Date' AND object_id = OBJECT_ID('dbo.Transactions'))
+                CREATE NONCLUSTERED INDEX IX_Transactions_AccountId_Date ON dbo.Transactions(AccountId, [Date]);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Transactions_AccountId_ReferenceNo' AND object_id = OBJECT_ID('dbo.Transactions'))
+                CREATE NONCLUSTERED INDEX IX_Transactions_AccountId_ReferenceNo ON dbo.Transactions(AccountId, ReferenceNo) WHERE ReferenceNo IS NOT NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WagePayments_PaidAt' AND object_id = OBJECT_ID('dbo.WagePayments'))
+                CREATE NONCLUSTERED INDEX IX_WagePayments_PaidAt ON dbo.WagePayments(PaidAt DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WagePayments_WorkerId_PaidAt' AND object_id = OBJECT_ID('dbo.WagePayments'))
+                CREATE NONCLUSTERED INDEX IX_WagePayments_WorkerId_PaidAt ON dbo.WagePayments(WorkerId, PaidAt DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerAdvances_WorkerId_IsSettled' AND object_id = OBJECT_ID('dbo.WorkerAdvances'))
+                CREATE NONCLUSTERED INDEX IX_WorkerAdvances_WorkerId_IsSettled ON dbo.WorkerAdvances(WorkerId, IsSettled, AdvanceDate DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_WorkerAdvances_AdvanceDate' AND object_id = OBJECT_ID('dbo.WorkerAdvances'))
+                CREATE NONCLUSTERED INDEX IX_WorkerAdvances_AdvanceDate ON dbo.WorkerAdvances(AdvanceDate DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_BagPurchases_PurchaseDate' AND object_id = OBJECT_ID('dbo.BagPurchases'))
+                CREATE NONCLUSTERED INDEX IX_BagPurchases_PurchaseDate ON dbo.BagPurchases(PurchaseDate DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_BagPurchases_Material_BagNumber' AND object_id = OBJECT_ID('dbo.BagPurchases'))
+                CREATE NONCLUSTERED INDEX IX_BagPurchases_Material_BagNumber ON dbo.BagPurchases(Material, BagNumber);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_BagPurchases_SupplierId' AND object_id = OBJECT_ID('dbo.BagPurchases'))
+                CREATE NONCLUSTERED INDEX IX_BagPurchases_SupplierId ON dbo.BagPurchases(SupplierId);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InventoryUsages_BagPurchaseId' AND object_id = OBJECT_ID('dbo.InventoryUsages'))
+                CREATE NONCLUSTERED INDEX IX_InventoryUsages_BagPurchaseId ON dbo.InventoryUsages(BagPurchaseId);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InventoryUsages_LotId' AND object_id = OBJECT_ID('dbo.InventoryUsages'))
+                CREATE NONCLUSTERED INDEX IX_InventoryUsages_LotId ON dbo.InventoryUsages(LotId);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_InventoryUsages_UsageDate' AND object_id = OBJECT_ID('dbo.InventoryUsages'))
+                CREATE NONCLUSTERED INDEX IX_InventoryUsages_UsageDate ON dbo.InventoryUsages(UsageDate DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SalePayments_PaymentDate' AND object_id = OBJECT_ID('dbo.SalePayments'))
+                CREATE NONCLUSTERED INDEX IX_SalePayments_PaymentDate ON dbo.SalePayments(PaymentDate DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditLogs_Timestamp' AND object_id = OBJECT_ID('dbo.AuditLogs'))
+                CREATE NONCLUSTERED INDEX IX_AuditLogs_Timestamp ON dbo.AuditLogs([Timestamp] DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditLogs_Module_Timestamp' AND object_id = OBJECT_ID('dbo.AuditLogs'))
+                CREATE NONCLUSTERED INDEX IX_AuditLogs_Module_Timestamp ON dbo.AuditLogs(Module, [Timestamp] DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AuditLogs_Action_Timestamp' AND object_id = OBJECT_ID('dbo.AuditLogs'))
+                CREATE NONCLUSTERED INDEX IX_AuditLogs_Action_Timestamp ON dbo.AuditLogs([Action], [Timestamp] DESC);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Accounts_CategoryId' AND object_id = OBJECT_ID('dbo.Accounts'))
+                CREATE NONCLUSTERED INDEX IX_Accounts_CategoryId ON dbo.Accounts(CategoryId);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Accounts_IsActive' AND object_id = OBJECT_ID('dbo.Accounts'))
+                CREATE NONCLUSTERED INDEX IX_Accounts_IsActive ON dbo.Accounts(IsActive);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Customers_IsActive_Name' AND object_id = OBJECT_ID('dbo.Customers'))
+                CREATE NONCLUSTERED INDEX IX_Customers_IsActive_Name ON dbo.Customers(IsActive, Name);
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Suppliers_IsActive_Name' AND object_id = OBJECT_ID('dbo.Suppliers'))
+                CREATE NONCLUSTERED INDEX IX_Suppliers_IsActive_Name ON dbo.Suppliers(IsActive, Name);
         ");
-        Console.WriteLine("✅ Database indexes verified");
+        Console.WriteLine("✅ SQL Server database indexes verified");
     }
     catch (Exception idxEx)
     {
         Console.WriteLine($"⚠️ Database indexes warning: {idxEx.Message}");
     }
 
-    // Apply complete correct permission matrix — inserts missing AND corrects wrong values
-    var correctPerms = new Dictionary<string, Dictionary<string, bool>>
+    // Seed default users, roles, and permissions once if missing
+    if (!db.Users.Any() || !db.Roles.Any() || !db.RolePermissions.Any())
     {
-        ["Admin"] = new() {
-            ["canViewLabour"]=true,  ["canAddLabour"]=true,  ["canEditLabour"]=true,  ["canDeleteLabour"]=true,
-            ["canViewWorkers"]=true, ["canAddEntry"]=true,   ["canEditEntry"]=true,   ["canDeleteEntry"]=true,
-            ["canManageRoles"]=true, ["canViewReports"]=true,
-            ["canViewAccounts"]=true, ["canAddTransaction"]=true, ["canEditTransaction"]=true, ["canDeleteTransaction"]=true, ["canManageAccounts"]=true,
-            ["canViewSettings"]=true, ["canAddSettings"]=true, ["canEditSettings"]=true, ["canDeleteSettings"]=true,
-            ["canViewWages"]=true, ["canManageWages"]=true, ["canRecordPayment"]=true,
-        },
-        ["Manager"] = new() {
-            ["canViewLabour"]=true,  ["canAddLabour"]=true,  ["canEditLabour"]=true,  ["canDeleteLabour"]=false,
-            ["canViewWorkers"]=true, ["canAddEntry"]=true,   ["canEditEntry"]=true,   ["canDeleteEntry"]=false,
-            ["canManageRoles"]=false, ["canViewReports"]=true,
-            ["canViewAccounts"]=false, ["canAddTransaction"]=false, ["canEditTransaction"]=false, ["canDeleteTransaction"]=false, ["canManageAccounts"]=false,
-            ["canViewSettings"]=true, ["canAddSettings"]=true, ["canEditSettings"]=true, ["canDeleteSettings"]=false,
-            ["canViewWages"]=true, ["canManageWages"]=false, ["canRecordPayment"]=true,
-        },
-        ["Viewer"] = new() {
-            ["canViewLabour"]=true,  ["canAddLabour"]=false, ["canEditLabour"]=false, ["canDeleteLabour"]=false,
-            ["canViewWorkers"]=true, ["canAddEntry"]=false,  ["canEditEntry"]=false,  ["canDeleteEntry"]=false,
-            ["canManageRoles"]=false, ["canViewReports"]=true,
-            ["canViewAccounts"]=false, ["canAddTransaction"]=false, ["canEditTransaction"]=false, ["canDeleteTransaction"]=false, ["canManageAccounts"]=false,
-            ["canViewSettings"]=true, ["canAddSettings"]=false, ["canEditSettings"]=false, ["canDeleteSettings"]=false,
-            ["canViewWages"]=true, ["canManageWages"]=false, ["canRecordPayment"]=false,
-        },
-    };
-
-    bool rolesAdded = false;
-    foreach (var roleName in correctPerms.Keys)
-    {
-        if (!db.Roles.Any(r => r.Name == roleName))
-        {
-            db.Roles.Add(new Role { Name = roleName });
-            rolesAdded = true;
-        }
+        var authSvc = scope.ServiceProvider.GetRequiredService<AuthService>();
+        authSvc.SeedUsersAndRolesAsync().GetAwaiter().GetResult();
+        Console.WriteLine("✅ Default users, roles, and permissions seeded");
     }
-    if (rolesAdded) db.SaveChanges();
-
-    var roles = db.Roles.Include(r => r.Permissions).ToList();
-    bool permChanged = false;
-    foreach (var role in roles)
-    {
-        if (!correctPerms.TryGetValue(role.Name, out var permsForRole)) continue;
-        foreach (var (perm, granted) in permsForRole)
-        {
-            var existing = role.Permissions.FirstOrDefault(p => p.Permission == perm);
-            if (existing == null)
-            {
-                role.Permissions.Add(new RolePermission { RoleId = role.Id, Permission = perm, IsGranted = granted });
-                permChanged = true;
-            }
-            else if (existing.IsGranted != granted)
-            {
-                existing.IsGranted = granted;
-                permChanged = true;
-            }
-        }
-    }
-    if (permChanged) db.SaveChanges();
-    Console.WriteLine("✅ Role permissions verified");
-
-    // Ensure default demo users exist and have working passwords
-    var defaultUsers = new[]
-    {
-        (Username: "admin",   Pass: "admin123",   Name: "Administrator", Role: "Admin"),
-        (Username: "manager", Pass: "manager123", Name: "Manager",       Role: "Manager"),
-        (Username: "viewer",  Pass: "viewer123",  Name: "Viewer",        Role: "Viewer"),
-    };
-    bool usersChanged = false;
-    foreach (var du in defaultUsers)
-    {
-        var existingUser = db.Users.FirstOrDefault(u => u.Username.ToLower() == du.Username);
-        if (existingUser == null)
-        {
-            db.Users.Add(new User
-            {
-                Username     = du.Username,
-                PasswordHash = du.Pass,
-                Name         = du.Name,
-                Role         = du.Role,
-                IsActive     = true,
-            });
-            usersChanged = true;
-        }
-        else if (!existingUser.IsActive || string.IsNullOrEmpty(existingUser.PasswordHash))
-        {
-            existingUser.IsActive = true;
-            existingUser.PasswordHash = du.Pass;
-            usersChanged = true;
-        }
-    }
-    if (usersChanged) db.SaveChanges();
-    Console.WriteLine("✅ Default users verified");
-
-    // Comprehensive seed of Admin with all permissions for all pages
-    var authSvc = scope.ServiceProvider.GetRequiredService<AuthService>();
-    authSvc.SeedUsersAndRolesAsync().GetAwaiter().GetResult();
-    Console.WriteLine("✅ Admin permissions for all pages verified");
 
     // Ensure default AccountCategories exist for Finance module
     if (!db.AccountCategories.Any())
@@ -344,11 +318,11 @@ try
         db.LotStages.AddRange(defaultStages.Select(n => new LotStageItem { Name = n, IsActive = true }));
         db.SaveChanges();
     }
-    Console.WriteLine("✅ Default master configuration lists verified");
+    Console.WriteLine("✅ Startup checks completed");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"⚠️ Migration warning: {ex.Message}");
+    Console.WriteLine($"⚠️ Startup warning: {ex.Message}");
     Console.WriteLine("Continuing startup...");
 }
 

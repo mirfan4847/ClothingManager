@@ -32,44 +32,63 @@ public class ReportsController : ControllerBase
     {
         var (f, t) = ParseRange(from, to);
 
-        var sales = await _db.Sales
-            .Include(s => s.Payments)
+        var periodSales = await _db.Sales
+            .AsNoTracking()
             .Where(s => s.SaleDate >= f && s.SaleDate <= t)
-            .ToListAsync();
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TotalRevenue = g.Sum(s => s.NetAmount),
+                SalesCount   = g.Count(),
+                PaidCount    = g.Count(s => s.Status == "Paid"),
+                PartialCount = g.Count(s => s.Status == "Partial"),
+                PendingCount = g.Count(s => s.Status == "Pending"),
+            })
+            .FirstOrDefaultAsync();
 
         var collected = await _db.SalePayments
+            .AsNoTracking()
             .Where(p => p.PaymentDate >= f && p.PaymentDate <= t)
-            .SumAsync(p => (decimal?)p.Amount) ?? 0;
+            .SumAsync(p => (decimal?)p.Amount) ?? 0m;
 
-        var allSales = await _db.Sales.Include(s => s.Payments).ToListAsync();
-        var outstanding = allSales.Sum(s => s.NetAmount - s.Payments.Sum(p => p.Amount));
+        var totalAllSalesNet = await _db.Sales
+            .AsNoTracking()
+            .SumAsync(s => (decimal?)s.NetAmount) ?? 0m;
 
-        var purchases = await _db.BagPurchases
+        var totalAllPayments = await _db.SalePayments
+            .AsNoTracking()
+            .SumAsync(p => (decimal?)p.Amount) ?? 0m;
+
+        var outstanding = totalAllSalesNet - totalAllPayments;
+
+        var totalPurchases = await _db.BagPurchases
+            .AsNoTracking()
             .Where(p => p.PurchaseDate >= f && p.PurchaseDate <= t)
-            .ToListAsync();
-        var totalPurchases = purchases.Sum(p => p.Quantity * (p.UnitPrice ?? 0));
+            .SumAsync(p => (decimal?)(p.Quantity * (p.UnitPrice ?? 0m))) ?? 0m;
 
         var wages = await _db.WagePayments
+            .AsNoTracking()
             .Where(w => w.PaidAt >= f && w.PaidAt <= t)
-            .SumAsync(w => (decimal?)w.NetAmount) ?? 0;
+            .SumAsync(w => (decimal?)w.NetAmount) ?? 0m;
 
         var accountBalance = await _db.Accounts
+            .AsNoTracking()
             .Where(a => a.IsActive)
-            .SumAsync(a => (decimal?)a.Balance) ?? 0;
+            .SumAsync(a => (decimal?)a.Balance) ?? 0m;
 
         return Ok(new
         {
-            TotalRevenue          = sales.Sum(s => s.NetAmount),
+            TotalRevenue          = periodSales?.TotalRevenue ?? 0m,
             TotalCollected        = collected,
             TotalOutstanding      = outstanding > 0 ? outstanding : 0m,
             TotalPurchaseExpenses = totalPurchases,
             TotalWagesExpenses    = wages,
             NetCashFlow           = collected - totalPurchases - wages,
             TotalAccountBalance   = accountBalance,
-            SalesCount            = sales.Count,
-            PaidCount             = sales.Count(s => s.Status == "Paid"),
-            PartialCount          = sales.Count(s => s.Status == "Partial"),
-            PendingCount          = sales.Count(s => s.Status == "Pending"),
+            SalesCount            = periodSales?.SalesCount ?? 0,
+            PaidCount             = periodSales?.PaidCount ?? 0,
+            PartialCount          = periodSales?.PartialCount ?? 0,
+            PendingCount          = periodSales?.PendingCount ?? 0,
         });
     }
 
@@ -81,6 +100,7 @@ public class ReportsController : ControllerBase
         var (f, t) = ParseRange(from, to);
 
         var sales = await _db.Sales
+            .AsNoTracking()
             .Include(s => s.Customer)
             .Include(s => s.Payments)
             .Where(s => s.SaleDate >= f && s.SaleDate <= t)
@@ -173,6 +193,7 @@ public class ReportsController : ControllerBase
         [FromQuery] DateTime? from, [FromQuery] DateTime? to)
     {
         var account = await _db.Accounts
+            .AsNoTracking()
             .Include(a => a.Category)
             .FirstOrDefaultAsync(a => a.Id == accountId);
         if (account == null) return NotFound();
@@ -181,14 +202,15 @@ public class ReportsController : ControllerBase
         var t = (to?.Date ?? DateTime.UtcNow.Date).AddDays(1).AddTicks(-1);
 
         var txns = await _db.Transactions
+            .AsNoTracking()
             .Where(tx => tx.AccountId == accountId && tx.Date >= f && tx.Date <= t)
             .OrderBy(tx => tx.Date).ThenBy(tx => tx.Id)
             .ToListAsync();
 
-        var prevTxns = await _db.Transactions
+        var openingBalance = await _db.Transactions
+            .AsNoTracking()
             .Where(tx => tx.AccountId == accountId && tx.Date < f)
-            .ToListAsync();
-        var openingBalance = prevTxns.Sum(tx => tx.Type == "Credit" ? tx.Amount : -tx.Amount);
+            .SumAsync(tx => (decimal?)(tx.Type == "Credit" ? tx.Amount : -tx.Amount)) ?? 0m;
 
         var running = openingBalance;
         var lines = txns.Select(tx =>

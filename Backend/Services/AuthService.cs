@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.IdentityModel.Tokens;
 using ClothingManager.Data;
 using ClothingManager.DTOs;
@@ -13,11 +14,14 @@ public class AuthService
 {
     private readonly AppDbContext _db;
     private readonly IConfiguration _config;
+    private readonly IMemoryCache _cache;
+    private const string RolePermsCachePrefix = "role_perms_";
 
-    public AuthService(AppDbContext db, IConfiguration config)
+    public AuthService(AppDbContext db, IConfiguration config, IMemoryCache cache)
     {
         _db = db;
         _config = config;
+        _cache = cache;
     }
 
     public async Task<LoginResponseDto?> LoginAsync(LoginRequestDto dto)
@@ -32,41 +36,54 @@ public class AuthService
             (uname == "viewer"  && password == "viewer123");
 
         User? user = null;
+        bool dbAvailable = true;
         try
         {
             user = await _db.Users
-                .FirstOrDefaultAsync(u => u.Username.ToLower() == uname
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Username == uname
                                        && (u.PasswordHash == password || u.PasswordHash == hashed || isDefaultDemoMatch)
                                        && u.IsActive);
         }
-        catch {}
+        catch
+        {
+            dbAvailable = false;
+        }
 
         // Auto-heal/provision if default credentials matched but user was missing or deactivated in DB
         if (user == null && isDefaultDemoMatch)
         {
-            try
+            if (dbAvailable)
             {
-                user = await _db.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == uname);
-                if (user == null)
+                try
                 {
-                    user = new User
+                    user = await _db.Users.FirstOrDefaultAsync(u => u.Username == uname);
+                    if (user == null)
                     {
-                        Username     = uname,
-                        PasswordHash = password,
-                        Name         = uname == "admin" ? "Administrator" : uname == "manager" ? "Manager" : "Viewer",
-                        Role         = uname == "admin" ? "Admin" : uname == "manager" ? "Manager" : "Viewer",
-                        IsActive     = true
-                    };
-                    _db.Users.Add(user);
+                        user = new User
+                        {
+                            Username     = uname,
+                            PasswordHash = password,
+                            Name         = uname == "admin" ? "Administrator" : uname == "manager" ? "Manager" : "Viewer",
+                            Role         = uname == "admin" ? "Admin" : uname == "manager" ? "Manager" : "Viewer",
+                            IsActive     = true
+                        };
+                        _db.Users.Add(user);
+                    }
+                    else
+                    {
+                        user.IsActive = true;
+                        user.PasswordHash = password;
+                    }
+                    await _db.SaveChangesAsync();
                 }
-                else
+                catch
                 {
-                    user.IsActive = true;
-                    user.PasswordHash = password;
+                    dbAvailable = false;
                 }
-                await _db.SaveChangesAsync();
             }
-            catch
+
+            if (user == null)
             {
                 // In-memory fallback user so authentication always succeeds for default demo accounts
                 user = new User
@@ -83,16 +100,29 @@ public class AuthService
 
         if (user == null) return null;
 
-        // Load permissions for the user's role
-        Dictionary<string, bool> permissions = new();
-        try
+        // Load permissions for the user's role (cached for 5 minutes)
+        var cacheKey = RolePermsCachePrefix + user.Role;
+        Dictionary<string, bool> permissions;
+        if (_cache.TryGetValue(cacheKey, out Dictionary<string, bool>? cachedPerms) && cachedPerms != null)
         {
-            permissions = await _db.RolePermissions
-                .Include(rp => rp.Role)
-                .Where(rp => rp.Role.Name == user.Role)
-                .ToDictionaryAsync(rp => rp.Permission, rp => rp.IsGranted);
+            permissions = new Dictionary<string, bool>(cachedPerms);
         }
-        catch {}
+        else
+        {
+            permissions = new Dictionary<string, bool>();
+            if (dbAvailable)
+            {
+                try
+                {
+                    permissions = await _db.RolePermissions
+                        .AsNoTracking()
+                        .Where(rp => rp.Role.Name == user.Role)
+                        .ToDictionaryAsync(rp => rp.Permission, rp => rp.IsGranted);
+                    _cache.Set(cacheKey, new Dictionary<string, bool>(permissions), TimeSpan.FromMinutes(5));
+                }
+                catch { }
+            }
+        }
 
         if (user.Role == "Admin")
         {
@@ -122,7 +152,7 @@ public class AuthService
     }
 
     public async Task<List<UserDto>> GetAllUsersAsync()
-        => await _db.Users.Select(u => new UserDto
+        => await _db.Users.AsNoTracking().Select(u => new UserDto
         {
             Id        = u.Id,
             Username  = u.Username,
@@ -189,7 +219,7 @@ public class AuthService
 
     public async Task<List<RolePermissionDto>> GetAllRolePermissionsAsync()
     {
-        var roles = await _db.Roles.Include(r => r.Permissions).ToListAsync();
+        var roles = await _db.Roles.AsNoTracking().Include(r => r.Permissions).ToListAsync();
         return roles.Select(r => new RolePermissionDto
         {
             Role        = r.Name,
@@ -211,6 +241,7 @@ public class AuthService
         }
 
         await _db.SaveChangesAsync();
+        _cache.Remove(RolePermsCachePrefix + roleName);
         return true;
     }
 

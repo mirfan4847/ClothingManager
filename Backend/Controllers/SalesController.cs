@@ -25,17 +25,33 @@ public class SalesController : ControllerBase
     [HttpGet("summary")]
     public async Task<IActionResult> Summary()
     {
-        var sales = await _db.Sales.Include(s => s.Payments).ToListAsync();
-        var totalPaid = sales.Sum(s => s.Payments.Sum(p => p.Amount));
+        var saleStats = await _db.Sales
+            .AsNoTracking()
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TotalSales   = g.Count(),
+                TotalRevenue = g.Sum(s => s.NetAmount),
+                PendingCount = g.Count(s => s.Status == "Pending"),
+                PartialCount = g.Count(s => s.Status == "Partial"),
+                PaidCount    = g.Count(s => s.Status == "Paid"),
+            })
+            .FirstOrDefaultAsync();
+
+        var totalPaid = await _db.SalePayments
+            .AsNoTracking()
+            .SumAsync(p => (decimal?)p.Amount) ?? 0m;
+
+        var totalRevenue = saleStats?.TotalRevenue ?? 0m;
         return Ok(new SaleSummaryDto
         {
-            TotalSales    = sales.Count,
-            TotalRevenue  = sales.Sum(s => s.NetAmount),
+            TotalSales    = saleStats?.TotalSales ?? 0,
+            TotalRevenue  = totalRevenue,
             TotalPaid     = totalPaid,
-            TotalBalance  = sales.Sum(s => s.NetAmount) - totalPaid,
-            PendingCount  = sales.Count(s => s.Status == "Pending"),
-            PartialCount  = sales.Count(s => s.Status == "Partial"),
-            PaidCount     = sales.Count(s => s.Status == "Paid"),
+            TotalBalance  = totalRevenue - totalPaid,
+            PendingCount  = saleStats?.PendingCount ?? 0,
+            PartialCount  = saleStats?.PartialCount ?? 0,
+            PaidCount     = saleStats?.PaidCount ?? 0,
         });
     }
 
@@ -46,6 +62,7 @@ public class SalesController : ControllerBase
         [FromQuery] DateTime? from,  [FromQuery] DateTime? to)
     {
         var q = _db.Sales
+            .AsNoTracking()
             .Include(s => s.Lot).ThenInclude(l => l.Size)
             .Include(s => s.Customer)
             .Include(s => s.Payments)
